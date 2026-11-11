@@ -326,6 +326,11 @@ function YouTubeDialog({ initial, onGo }: { initial: string; onGo: (title: strin
         <div className="callout warn">
           <div>
             <b>{fail.error}</b>
+            {!(window as any).turbogoo?.desktop && (
+              <p className="small">
+                Tip: the TurboGoo <b>desktop app</b> fetches transcripts from your own connection, which YouTube allows. Websites hosted in the cloud are often blocked.
+              </p>
+            )}
             <p className="small">
               You can still import it: on YouTube open the video, click <b>…more</b> under the title → <b>Show transcript</b>, select all the text, and paste it here. Timestamps are removed automatically.
             </p>

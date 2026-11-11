@@ -9,6 +9,12 @@
 export type Segment = { start: number; text: string };
 export type Transcript = { videoId: string; title: string; author: string; lang: string; segments: Segment[]; text: string; method: string };
 
+/** Hosts can swap in a different fetch (the desktop app uses Chromium's network stack). */
+let F: typeof fetch = (...a) => fetch(...a);
+export const setFetch = (f: typeof fetch) => {
+  F = f;
+};
+
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 const COOKIE = "CONSENT=YES+cb; SOCS=CAI";
 
@@ -46,7 +52,7 @@ async function get(url: string, init: RequestInit = {}) {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), 15000);
   try {
-    return await fetch(url, { ...init, signal: ctl.signal, headers: { "user-agent": UA, "accept-language": "en-US,en;q=0.9", cookie: COOKIE, ...(init.headers as object) } });
+    return await F(url, { ...init, signal: ctl.signal, headers: { "user-agent": UA, "accept-language": "en-US,en;q=0.9", cookie: COOKIE, ...(init.headers as object) } });
   } finally {
     clearTimeout(t);
   }

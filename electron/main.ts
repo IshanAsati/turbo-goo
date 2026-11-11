@@ -1,0 +1,175 @@
+import { app, BrowserWindow, net, protocol, session, shell, Menu } from "electron";
+import path from "node:path";
+import fs from "node:fs";
+import { pathToFileURL } from "node:url";
+import { getTranscript, setFetch } from "../server/youtube";
+
+/**
+ * TurboGoo desktop shell.
+ *
+ * - The built web app is served from a custom `turbogoo://app` origin (no TCP port is opened).
+ * - /api/youtube runs here in the main process, so captions are fetched from the user's own connection
+ *   (cloud servers are blocked by YouTube; residential IPs are not).
+ * - CORS is relaxed for this app's own pages only, so any AI provider (Groq, OpenRouter, local Ollama...) works.
+ */
+
+const SCHEME = "turbogoo";
+const ORIGIN = `${SCHEME}://app`;
+const DEV_URL = process.env.TURBOGOO_DEV_URL; // e.g. http://localhost:5173 for hot-reload development
+const DIST = path.join(app.getAppPath(), "dist");
+
+protocol.registerSchemesAsPrivileged([{ scheme: SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } }]);
+
+if (!app.requestSingleInstanceLock()) app.quit();
+
+let win: BrowserWindow | null = null;
+
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net blob:", // jsdelivr: Tesseract OCR worker
+  "worker-src 'self' blob:",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self' data:",
+  "img-src 'self' data: blob:",
+  "media-src 'self' blob: data:",
+  "connect-src *",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+].join("; ");
+
+function isOurPage(url: string | undefined) {
+  return !!url && (url.startsWith(ORIGIN) || (!!DEV_URL && url.startsWith(DEV_URL)));
+}
+
+async function serve(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  if (url.hostname !== "app") return new Response("Not found", { status: 404 });
+
+  if (url.pathname === "/api/youtube") {
+    try {
+      const t = await getTranscript(url.searchParams.get("url") ?? "", url.searchParams.get("lang") ?? "en");
+      return Response.json(t);
+    } catch (e: any) {
+      return Response.json({ error: e.message, title: e.title ?? "" }, { status: 502 });
+    }
+  }
+
+  let rel = decodeURIComponent(url.pathname);
+  if (rel === "/" || rel === "") rel = "/index.html";
+  const full = path.normalize(path.join(DIST, rel));
+  if (full !== DIST && !full.startsWith(DIST + path.sep)) return new Response("Forbidden", { status: 403 }); // path traversal guard
+
+  let target = full;
+  if (!fs.existsSync(target) || fs.statSync(target).isDirectory()) {
+    if (path.extname(rel)) return new Response("Not found", { status: 404 });
+    target = path.join(DIST, "index.html"); // SPA fallback
+  }
+  const res = await net.fetch(pathToFileURL(target).toString());
+  const headers = new Headers(res.headers);
+  headers.set("Content-Security-Policy", CSP);
+  headers.set("X-Content-Type-Options", "nosniff");
+  return new Response(res.body, { status: res.status, headers });
+}
+
+function hardenSession() {
+  const ses = session.defaultSession;
+
+  // Only the microphone, only for our own pages.
+  ses.setPermissionRequestHandler((wc, permission, cb, details: any) => {
+    const ok = isOurPage(details.requestingUrl ?? wc.getURL());
+    if (permission === "media") return cb(ok && (details.mediaTypes ?? []).every((t: string) => t === "audio"));
+    cb(ok && ["notifications", "clipboard-sanitized-write", "fullscreen"].includes(permission));
+  });
+  ses.setPermissionCheckHandler((wc, permission, origin) => isOurPage(origin) && ["media", "notifications", "clipboard-sanitized-write", "fullscreen"].includes(permission));
+
+  // Local model servers (Ollama, LM Studio) reject browser Origins; strip it for loopback requests from our pages.
+  ses.webRequest.onBeforeSendHeaders((details, cb) => {
+    const h = { ...details.requestHeaders };
+    try {
+      const host = new URL(details.url).hostname;
+      const origin = h["Origin"] ?? h["origin"];
+      const ours = origin === ORIGIN || (!!DEV_URL && origin === new URL(DEV_URL).origin);
+      if (ours && (host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host === "::1")) {
+        delete h["Origin"];
+        delete h["origin"];
+      }
+    } catch {
+      /* ignore */
+    }
+    cb({ requestHeaders: h });
+  });
+
+  // Let our own pages call any AI provider regardless of its CORS policy.
+  ses.webRequest.onHeadersReceived((details, cb) => {
+    const fromUs = details.webContents && isOurPage(details.webContents.getURL()) && !details.url.startsWith(`${SCHEME}:`) && !details.url.startsWith("file:") && !details.url.startsWith("devtools:");
+    if (!fromUs) return cb({});
+    const headers: Record<string, string[]> = {};
+    for (const [k, v] of Object.entries(details.responseHeaders ?? {})) if (!k.toLowerCase().startsWith("access-control-")) headers[k] = v;
+    headers["Access-Control-Allow-Origin"] = [DEV_URL ? new URL(DEV_URL).origin : ORIGIN];
+    headers["Access-Control-Allow-Headers"] = ["Authorization, Content-Type, Accept, X-Requested-With, OpenAI-Organization, X-Api-Key"];
+    headers["Access-Control-Allow-Methods"] = ["GET, POST, OPTIONS"];
+    headers["Vary"] = ["Origin"];
+    cb({ responseHeaders: headers, ...(details.method === "OPTIONS" ? { statusLine: "HTTP/1.1 204 No Content" } : {}) });
+  });
+}
+
+function createWindow() {
+  win = new BrowserWindow({
+    width: 1280,
+    height: 860,
+    minWidth: 420,
+    minHeight: 600,
+    show: false,
+    title: "TurboGoo",
+    backgroundColor: "#f6f6fb",
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(app.getAppPath(), "dist-electron", "preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      spellcheck: true,
+    },
+  });
+  win.once("ready-to-show", () => win?.show());
+
+  // External links open in the real browser; the app never navigates away from itself.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  win.webContents.on("will-navigate", (e, url) => {
+    if (!isOurPage(url)) {
+      e.preventDefault();
+      if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    }
+  });
+
+  void win.loadURL(DEV_URL ?? `${ORIGIN}/`);
+  win.on("closed", () => (win = null));
+}
+
+app.on("second-instance", () => {
+  if (win) {
+    if (win.isMinimized()) win.restore();
+    win.focus();
+  }
+});
+
+app.whenReady().then(() => {
+  setFetch(((input: any, init: any) => net.fetch(input, init)) as typeof fetch);
+  protocol.handle(SCHEME, serve);
+  hardenSession();
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    { role: "appMenu" as const },
+    { role: "editMenu" as const },
+    { role: "viewMenu" as const },
+    { role: "windowMenu" as const },
+  ]));
+  createWindow();
+  app.on("activate", () => BrowserWindow.getAllWindows().length === 0 && createWindow());
+});
+
+app.on("window-all-closed", () => process.platform !== "darwin" && app.quit());

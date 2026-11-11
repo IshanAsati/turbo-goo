@@ -3,13 +3,64 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "description": "TurboGoo: a local-first AI study workspace",
+  "author": "Ishan A",
+  "main": "dist-electron/main.mjs",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:electron": "node scripts/build-electron.mjs",
+    "desktop": "npm run build && npm run build:electron && electron .",
+    "dist:win": "npm run build && npm run build:electron && electron-builder --win",
+    "dist:mac": "npm run build && npm run build:electron && electron-builder --mac",
+    "dist:linux": "npm run build && npm run build:electron && electron-builder --linux"
   },
-  "dependencies": {
+  "build": {
+    "appId": "app.turbogoo.desktop",
+    "productName": "TurboGoo",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "TurboGoo-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.education",
+      "artifactName": "TurboGoo-${version}-${arch}.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Education",
+      "artifactName": "TurboGoo-${version}-${arch}.${ext}"
+    }
+  },
+  "dependencies": {},
+  "devDependencies": {
     "@fontsource-variable/inter": "^5.3.0",
+    "@types/react": "19.1.8",
+    "@types/react-dom": "19.1.6",
+    "@vitejs/plugin-react": "4.6.0",
+    "electron": "^44.9.3",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.25.12",
     "idb-keyval": "^6.3.0",
     "jszip": "^3.10.2",
     "katex": "^0.19.1",
@@ -22,12 +73,7 @@
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
-    "tesseract.js": "^7.0.0"
-  },
-  "devDependencies": {
-    "@types/react": "19.1.8",
-    "@types/react-dom": "19.1.6",
-    "@vitejs/plugin-react": "4.6.0",
+    "tesseract.js": "^7.0.0",
     "typescript": "5.8.3",
     "vite": "7.0.4"
   }

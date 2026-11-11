@@ -18,6 +18,24 @@ npm run build      # typecheck + production build
 
 It works immediately in **offline mode** (a basic built-in engine). For real quality, open **Settings** and connect any OpenAI-compatible provider (OpenAI, OpenRouter, Groq, Gemini, Together, or local Ollama). Your key stays in your browser and is sent only to the Base URL you set.
 
+## Desktop app (Windows / macOS / Linux)
+
+The desktop app is the same UI in an Electron shell, and it fixes the two main limits of the website:
+
+- **YouTube import works reliably.** Captions are fetched from *your* connection instead of a cloud server, which YouTube blocks.
+- **Any AI provider works** (Groq, OpenRouter, local Ollama or LM Studio) without CORS or `OLLAMA_ORIGINS` setup.
+
+```bash
+npm run desktop       # build and launch the app
+npm run dist:win      # installer in release/  (TurboGoo-Setup-x.y.z.exe)
+npm run dist:mac      # .dmg   (build on a Mac)
+npm run dist:linux    # .AppImage   (build on Linux)
+```
+
+Pushing a tag like `v0.1.0` runs `.github/workflows/release.yml`, which builds all three installers and attaches them to a GitHub Release. Builds are **unsigned**: Windows shows a one-time SmartScreen warning ("More info → Run anyway") and macOS needs right-click → Open the first time. Add signing certificates as repository secrets to remove those warnings.
+
+Security model: the app is served from a custom `turbogoo://` origin (no network port is opened), the renderer is sandboxed with no Node access, a strict Content-Security-Policy applies, only the microphone permission is granted, and links open in your normal browser. Your API key stays in the app's local storage and goes only to the provider you configure.
+
 ## Features
 
 **Capture**
@@ -53,7 +71,7 @@ Providers must allow browser (CORS) requests. For Ollama start it with `OLLAMA_O
 
 ## YouTube
 
-`/api/youtube` fetches captions server-side using several methods in order (transcript panel, caption tracks, Android client). It works in `npm run dev`/`vite preview` and on Vercel via `api/youtube.ts`, but YouTube blocks many datacenter IPs and changes this regularly, so deployed copies may fail. The app then shows the "paste from Show transcript" fallback.
+`/api/youtube` fetches captions using several methods in order (transcript panel, caption tracks, Android client). In the **desktop app** it runs on your own connection and works. On a **hosted website** it usually fails, because YouTube blocks cloud IP ranges (confirmed by many reports; the only fixes are paid residential proxies or a paid transcript API). The website then shows the "paste from Show transcript" fallback and suggests the desktop app.
 
 ## Known limits (honest list)
 
@@ -61,4 +79,6 @@ Providers must allow browser (CORS) requests. For Ollama start it with `OLLAMA_O
 - Offline mode is a heuristic fallback. Its notes and cards are much weaker than any LLM's, and topic-only courses need an API key.
 - Audio files over 25 MB can't be transcribed (provider limit); live browser transcription needs Chrome/Edge/Safari and sends audio to the browser vendor's speech service.
 - Data lives in IndexedDB; clearing site data deletes it. Back up from Settings.
-- Not yet tested on real iOS Safari, Firefox, or with real provider keys (tested against a mock OpenAI-compatible server and real YouTube/PDF/DOCX/PPTX inputs in Chromium).
+- Not yet tested on real iOS Safari, Firefox, or with real provider keys (tested against a mock OpenAI-compatible server and real YouTube/PDF/DOCX/PPTX inputs in Chromium and Electron).
+- The Windows installer was built and tested here. The macOS and Linux builds come from the CI workflow and have **not** been run.
+- Desktop auto-update is not set up; install new versions manually.
