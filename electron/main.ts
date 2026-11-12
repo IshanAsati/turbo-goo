@@ -1,4 +1,4 @@
-import { app, BrowserWindow, net, protocol, session, shell, Menu } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, net, protocol, session, shell, Menu } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -170,6 +170,26 @@ app.on("second-instance", () => {
     if (win.isMinimized()) win.restore();
     win.focus();
   }
+});
+
+/** "Save as PDF": render the page with its print stylesheet (the notes layout), ask where to save, write it, open it. */
+ipcMain.handle("export-pdf", async (event, rawTitle: unknown) => {
+  if (!isOurPage(event.senderFrame?.url)) throw new Error("Not allowed from this page.");
+  const wc = event.sender;
+  const name = (String(rawTitle ?? "").replace(/[\\/:*?"<>|\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "TurboGoo notes") + ".pdf";
+  const data = await wc.printToPDF({ printBackground: true, pageSize: "A4", preferCSSPageSize: false, margins: { top: 0.6, bottom: 0.6, left: 0.6, right: 0.6 } });
+  // Test hook, only in an unpackaged build: skip the dialog so automation can check the file.
+  const testPath = !app.isPackaged ? process.env.TURBOGOO_TEST_PDF : undefined;
+  let file = testPath;
+  if (!file) {
+    const win = BrowserWindow.fromWebContents(wc);
+    const pick = await (win ? dialog.showSaveDialog(win, { defaultPath: path.join(app.getPath("documents"), name), filters: [{ name: "PDF", extensions: ["pdf"] }] }) : dialog.showSaveDialog({ defaultPath: path.join(app.getPath("documents"), name), filters: [{ name: "PDF", extensions: ["pdf"] }] }));
+    if (pick.canceled || !pick.filePath) return null;
+    file = pick.filePath.toLowerCase().endsWith(".pdf") ? pick.filePath : pick.filePath + ".pdf";
+  }
+  fs.writeFileSync(file, data);
+  if (!testPath) void shell.openPath(file);
+  return file;
 });
 
 app.whenReady().then(() => {

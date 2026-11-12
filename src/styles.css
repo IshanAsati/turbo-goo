@@ -435,6 +435,13 @@ label.check { display: inline-flex; align-items: center; gap: 8px; margin: 0; co
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; } }
 @media print {
+  /* Always print dark ink on white, even when the app is in dark mode. */
+  :root, :root[data-theme="dark"] { --bg: #fff; --panel: #fff; --panel2: #f1f1f1; --ink: #111; --muted: #444; --line: #ccc; --brand: #2c4a33; --hl: #e8c978; color-scheme: light; }
+  html, body { background: #fff !important; color: #111 !important; }
+  .md, .md p, .md li, .md td, .md th, .md h1, .md h2, .md h3, .print-only h1 { color: #111 !important; }
+  .md, .md li, .md p { font-size: 11.5pt; line-height: 1.55; }
+  .toaster, .modal, .doc-head, .subject-select { display: none !important; }
+  .print-only h1 { margin: 0 0 .4em; }
   body { background: #fff; color: #000; }
   .shell > *:not(.main), .doc-head, .tabs, .banner, .notes-layout > :not(.print-only) { display: none !important; }
   .main, .page { padding: 0 !important; max-width: none !important; } .notes-layout { display: block; }

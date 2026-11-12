@@ -70,6 +70,17 @@ export function NotesTab({ doc, generating, onAsk }: { doc: Doc; generating: boo
     }, 50);
   }
 
+  /** Desktop app: render and save a real PDF file (and open it). Browser: fall back to the print dialog ("Save as PDF"). */
+  const exportPdf = async () => {
+    const api = (window as unknown as { turbogoo?: { exportPdf?: (title: string) => Promise<string | null> } }).turbogoo;
+    if (!api?.exportPdf) return window.print();
+    try {
+      const file = await api.exportPdf(doc.title);
+      if (file) toast("Saved and opened " + file.split(/[\\/]/).pop(), "ok");
+    } catch (e) {
+      toast("Couldn't save the PDF: " + (e as Error).message, "error");
+    }
+  };
   const exportMd = () => {
     const url = URL.createObjectURL(new Blob([doc.notes], { type: "text/markdown" }));
     Object.assign(document.createElement("a"), { href: url, download: `${doc.title}.md` }).click();
@@ -104,7 +115,7 @@ export function NotesTab({ doc, generating, onAsk }: { doc: Doc; generating: boo
             </button>
           )}
           <button onClick={exportMd} disabled={empty}>.md</button>
-          <button onClick={() => window.print()} disabled={empty}>PDF</button>
+          <button onClick={exportPdf} disabled={empty}>PDF</button>
           <span className="muted small">{words} words</span>
         </div>
 
@@ -161,7 +172,7 @@ export function NotesTab({ doc, generating, onAsk }: { doc: Doc; generating: boo
         <SourcePanel doc={doc} />
       </aside>
 
-      <div className="print-only"><h1>{doc.title}</h1><Markdown text={doc.notes} /></div>
+      <div className="print-only">{!/^\s*#\s/.test(doc.notes) && <h1>{doc.title}</h1>}<Markdown text={doc.notes} /></div>
     </div>
   );
 }
