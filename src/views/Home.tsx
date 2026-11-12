@@ -1,30 +1,47 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, Check, Compass, FileText, Flame, FolderPlus, Layers, MoreHorizontal, Mic, Pin, Play, Search, Sparkles, Trash2, Upload, Video } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowRight, FolderPlus, Mic, MoreHorizontal, Pin, Play, Search, Trash2 } from "lucide-react";
 import { go } from "../lib/nav";
-import { dayKey, deleteDoc, liveStreak, setMeta, uid, updateDoc, useStore } from "../lib/store";
-import { createDoc } from "../lib/generate";
-import { ACCEPT, fetchYouTube, ingestFile, isYouTube } from "../lib/ingest";
-import { cleanTranscript } from "../lib/text";
+import { addThread, dayKey, deleteDoc, liveStreak, setMeta, uid, updateDoc, useStore } from "../lib/store";
+import { createCourseDoc, createDoc } from "../lib/generate";
+import { isYouTube } from "../lib/ingest";
+import { hasLLM } from "../lib/llm";
+import { attachText, combineSources, kindOf } from "../lib/sources";
+import { handOff } from "../lib/handoff";
 import { dueCount } from "../lib/srs";
 import { SAMPLE_SOURCE, SAMPLE_TITLE } from "../lib/sample";
+import { SUBJECT_LIST } from "../lib/subjects";
+import type { Doc, Subject } from "../lib/types";
 import { confirmDialog, Modal, promptDialog, toast } from "../components/feedback";
+import { AttachButton, AttachmentChips, useAttachments } from "../components/SourceTray";
 import { Recorder } from "./Recorder";
 
-type Dialog = null | "text" | "youtube" | "record";
+type Mode = "set" | "course" | "chat";
+const MODES: { id: Mode; label: string }[] = [
+  { id: "set", label: "Study set" },
+  { id: "course", label: "Course" },
+  { id: "chat", label: "Chat" },
+];
+const LONG_TEXT = 200; // typed text at least this long is treated as a source, shorter text as a topic/title
+const stripExt = (n: string) => n.replace(/\.[a-z0-9]{2,5}$/i, "");
 
 export function Home() {
   const { docs, meta, settings } = useStore();
+  const api = useAttachments();
+  const [input, setInput] = useState("");
+  const [mode, setMode] = useState<Mode>("set");
+  const [subject, setSubject] = useState<Subject | "auto">("auto");
   const [q, setQ] = useState("");
   const [folder, setFolder] = useState<string>("all");
-  const [dialog, setDialog] = useState<Dialog>(null);
-  const [ytPrefill, setYtPrefill] = useState("");
-  const [working, setWorking] = useState("");
+  const [recording, setRecording] = useState(false);
   const [drag, setDrag] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
 
   const due = docs.reduce((n, d) => n + dueCount(d.cards), 0);
-  const mastered = docs.reduce((n, d) => n + d.cards.filter((c) => c.mastery >= 80).length, 0);
+  const streak = liveStreak(meta);
   const folderId = folder === "all" ? "f-general" : folder;
+  const text = input.trim();
+  const isSource = text.length >= LONG_TEXT;
+  const nSources = api.atts.length + (isSource ? 1 : 0);
+  const canBuild = !api.busy && (nSources > 0 || text.length >= 3);
 
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -33,35 +50,50 @@ export function Home() {
       .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || b.updatedAt - a.updatedAt);
   }, [docs, q, folder]);
 
-  async function handleFiles(files: FileList | File[] | null) {
-    const f = files && Array.from(files)[0];
-    if (!f) return;
-    try {
-      const r = await ingestFile(f, settings, setWorking);
-      if (r.source.trim().length < 40) throw new Error("I couldn't find enough text in that file to build study materials from.");
-      setWorking("");
-      go(`/doc/${createDoc({ ...r, folderId })}`);
-    } catch (e) {
-      setWorking("");
-      toast((e as Error).message, "error");
-    }
-  }
-
-  // Paste a YouTube link or an image anywhere on the library page.
+  // Paste a YouTube link or an image anywhere on the page to attach it.
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       if ((e.target as HTMLElement).closest("input,textarea")) return;
-      const img = Array.from(e.clipboardData?.files ?? []).find((f) => f.type.startsWith("image/"));
-      if (img) return void handleFiles([img]);
+      const files = Array.from(e.clipboardData?.files ?? []);
+      if (files.length) return void api.addFiles(files);
       const t = e.clipboardData?.getData("text") ?? "";
-      if (isYouTube(t)) {
-        setYtPrefill(t.trim());
-        setDialog("youtube");
-      }
+      if (isYouTube(t)) void api.addLink(t.trim());
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
   });
+
+  function build() {
+    if (!canBuild) return;
+    const atts = isSource ? [...api.atts, attachText(text)] : api.atts;
+    const typedTitle = isSource ? "" : text;
+
+    if (mode === "chat") {
+      const t = addThread({ title: (typedTitle || atts[0]?.name || "New chat").slice(0, 60), attachments: atts });
+      if (typedTitle) handOff(t.id, typedTitle);
+      return go(`/chat/${t.id}`);
+    }
+    if (!atts.length) {
+      // A bare topic: only an AI provider can research it.
+      if (!hasLLM(settings)) return toast("Learning a bare topic needs an AI provider (Settings). Or attach a file, link or notes to build from.", "error");
+      return go(`/doc/${createCourseDoc({ title: typedTitle, source: "", kind: "topic", folderId, subject: subject === "auto" ? undefined : subject })}?tab=course`);
+    }
+    const source = combineSources(atts);
+    if (source.trim().length < 40) return toast("There isn't enough text in those sources to build from yet.", "error");
+    const title = typedTitle || (atts.length === 1 ? stripExt(atts[0].name) : `${stripExt(atts[0].name)} + ${atts.length - 1} more`);
+    const sub = subject === "auto" ? undefined : subject;
+    const id = mode === "course" ? createCourseDoc({ title, source, kind: kindOf(atts), folderId, subject: sub }) : createDoc({ title, source, kind: kindOf(atts), folderId, subject: sub });
+    go(`/doc/${id}${mode === "course" ? "?tab=course" : ""}`);
+  }
+
+  const plan =
+    mode === "chat"
+      ? nSources ? `Opens a conversation grounded in ${nSources} source${nSources > 1 ? "s" : ""}.` : "Opens a conversation. You can attach sources there too."
+      : nSources
+        ? `${nSources} source${nSources > 1 ? "s" : ""} → one ${mode === "course" ? "guided course" : "set of notes, flashcards and a quiz"}${!isSource && text ? `, titled “${text.slice(0, 40)}”` : ""}.`
+        : text
+          ? `No sources attached, so this researches “${text.slice(0, 40)}” as a topic and builds a course.`
+          : "Type a topic, paste notes, or attach files, slides, recordings and links. As many as you like.";
 
   const newFolder = async () => {
     const name = await promptDialog("New folder", "Name", "", "Create", "e.g. Biology, Fall 2026");
@@ -82,79 +114,80 @@ export function Home() {
     docs.filter((d) => d.folderId === folder).forEach((d) => updateDoc(d.id, { folderId: "f-general" }));
     setFolder("all");
   };
-
   const trySample = () => go(`/doc/${createDoc({ title: SAMPLE_TITLE, source: SAMPLE_SOURCE, kind: "audio", folderId })}`);
 
   return (
-    <div className="page">
-      <header className="hero">
-        <div>
-          <h1>{greeting()}. What are we learning?</h1>
-          <p className="muted">Drop in a lecture, PDF, video or topic. Get notes, flashcards, quizzes and a podcast in about a minute.</p>
-        </div>
-        {docs.length > 0 && (
-          <div className="stats">
-            <button className={"stat" + (due ? " hot" : "")} onClick={() => go("/review")} aria-label={`Review ${due} due cards`}>
-              <Layers size={18} /> <b>{due}</b> <span>due</span>
-            </button>
-            <div className="stat"><Flame size={18} /> <b>{liveStreak(meta)}</b> <span>streak</span></div>
-            <div className="stat"><Check size={18} /> <b>{mastered}</b> <span>mastered</span></div>
-          </div>
-        )}
+    <div className="page home">
+      <header className="masthead">
+        <p className="eyebrow">
+          {new Date().toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}
+          {docs.length > 0 && <> · <button className="eyebrow-link" onClick={() => go("/review")}>{due} due</button> · {streak}-day streak</>}
+        </p>
+        <h1 className="display">{greeting()}. <em>What are we studying?</em></h1>
       </header>
 
-      <div className="tiles">
-        <Tile icon={<FileText />} title="Paste text" sub="Notes, articles, transcripts" onClick={() => setDialog("text")} />
-        <Tile icon={<Upload />} title="Upload" sub="PDF, Word, slides, audio, images" onClick={() => fileRef.current?.click()} />
-        <Tile icon={<Mic />} title="Record lecture" sub="Live transcript, crash-safe" onClick={() => setDialog("record")} />
-        <Tile icon={<Video />} title="YouTube" sub="Paste a link" onClick={() => setDialog("youtube")} />
-        <Tile icon={<Compass />} title="Learn a topic" sub="12-section guided course" onClick={() => go("/learn")} accent />
-      </div>
-      <input ref={fileRef} hidden type="file" accept={ACCEPT} onChange={(e) => (handleFiles(e.target.files), (e.target.value = ""))} />
-
-      <div
-        className={"drop" + (drag ? " drag" : "")}
+      <section
+        className={"composer-box big" + (drag ? " drag" : "")}
         onDragOver={(e) => (e.preventDefault(), setDrag(true))}
-        onDragLeave={() => setDrag(false)}
-        onDrop={(e) => (e.preventDefault(), setDrag(false), void handleFiles(e.dataTransfer.files))}
-        onClick={() => fileRef.current?.click()}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => e.key === "Enter" && fileRef.current?.click()}
+        onDragLeave={(e) => e.currentTarget === e.target && setDrag(false)}
+        onDrop={(e) => (e.preventDefault(), setDrag(false), void api.addFiles(e.dataTransfer.files))}
       >
-        {working ? (
-          <div className="working"><span className="spinner" /> {working}</div>
-        ) : (
-          <>
-            <Upload size={22} />
-            <b>Drop a file here</b>
-            <span className="muted small">PDF · Word · PowerPoint · text · .srt/.vtt · images (OCR) · audio and video (needs an API key)</span>
-          </>
-        )}
-      </div>
+        <textarea
+          aria-label="Topic, text or instructions"
+          rows={3}
+          placeholder="Antitrust law… or paste your lecture notes… or drop a PDF, slides and a YouTube link here"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onPaste={(e) => {
+            const files = Array.from(e.clipboardData.files);
+            if (files.length) (e.preventDefault(), void api.addFiles(files));
+            const t = e.clipboardData.getData("text");
+            if (!files.length && isYouTube(t) && !input.trim()) (e.preventDefault(), void api.addLink(t.trim()));
+          }}
+          onKeyDown={(e) => e.key === "Enter" && (e.ctrlKey || e.metaKey) && build()}
+        />
+        <AttachmentChips api={api} />
+        <div className="composer-foot">
+          <AttachButton api={api} />
+          <button className="ghost-btn" onClick={() => setRecording(true)}><Mic size={15} /> Record</button>
+          <span className="spacer" />
+          <select className="subject-select" aria-label="Subject" title="Subject: tunes the notes, flashcards and quiz" value={subject} onChange={(e) => setSubject(e.target.value as Subject | "auto")}>
+            <option value="auto">Subject: auto</option>
+            {SUBJECT_LIST.filter((x) => x.id !== "general").map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
+            <option value="general">General</option>
+          </select>
+          <div className="seg" role="radiogroup" aria-label="What to build">
+            {MODES.map((m) => (
+              <button key={m.id} role="radio" aria-checked={mode === m.id} className={mode === m.id ? "on" : ""} onClick={() => setMode(m.id)}>{m.label}</button>
+            ))}
+          </div>
+          <button className="primary build" disabled={!canBuild} onClick={build}>Build <ArrowRight size={16} /></button>
+        </div>
+      </section>
+      <p className="plan">{plan}{canBuild && <kbd>Ctrl ↵</kbd>}</p>
 
       {docs.length === 0 ? (
-        <div className="empty">
-          <Sparkles size={28} />
-          <h2>Start with a sample</h2>
-          <p className="muted">See what TurboGoo makes from a messy 5-minute calculus lecture (with the chatter filtered out and the math typeset).</p>
+        <section className="first-run">
+          <p className="eyebrow">First time?</p>
+          <h2 className="display">See what it makes from a messy lecture.</h2>
+          <p className="muted">A 5-minute calculus lecture with the chatter filtered out and the math typeset. Works offline, no setup.</p>
           <button className="primary" onClick={trySample}><Play size={16} /> Try the sample lecture</button>
-          <p className="muted small">Works offline with no setup. Add an API key in Settings for much better output.</p>
-        </div>
+        </section>
       ) : (
-        <>
-          <div className="toolbar">
+        <section className="ledger" aria-label="Library">
+          <div className="ledger-head">
+            <h2 className="display">Library <span className="tally">{docs.length}</span></h2>
             <div className="searchbox">
-              <Search size={16} />
-              <input aria-label="Search your library" placeholder="Search your library" value={q} onChange={(e) => setQ(e.target.value)} />
+              <Search size={15} />
+              <input aria-label="Search your library" placeholder="Search" value={q} onChange={(e) => setQ(e.target.value)} />
             </div>
           </div>
           <div className="folders">
-            <button className={"chip" + (folder === "all" ? " on" : "")} onClick={() => setFolder("all")}>All</button>
+            <button className={"tabchip" + (folder === "all" ? " on" : "")} onClick={() => setFolder("all")}>All</button>
             {meta.folders.map((f) => (
-              <button key={f.id} className={"chip" + (folder === f.id ? " on" : "")} onClick={() => setFolder(f.id)}>{f.name}</button>
+              <button key={f.id} className={"tabchip" + (folder === f.id ? " on" : "")} onClick={() => setFolder(f.id)}>{f.name}</button>
             ))}
-            <button className="chip ghost" onClick={newFolder}><FolderPlus size={14} /> Folder</button>
+            <button className="tabchip add" onClick={newFolder}><FolderPlus size={13} /> Folder</button>
             {folder !== "all" && folder !== "f-general" && (
               <>
                 <button className="link small" onClick={renameFolder}>Rename</button>
@@ -165,22 +198,18 @@ export function Home() {
           {shown.length === 0 ? (
             <p className="muted">{q ? "No matches." : "This folder is empty."}</p>
           ) : (
-            <div className="grid">
-              {shown.map((d) => (
-                <DocCard key={d.id} id={d.id} />
-              ))}
-            </div>
+            <ol className="ledger-list">
+              {shown.map((d) => <DocRow key={d.id} d={d} />)}
+            </ol>
           )}
           <Heatmap activity={meta.activity} />
-        </>
+        </section>
       )}
 
-      {dialog && (
-        <Modal onClose={() => !working && setDialog(null)} label={dialog}>
-          {dialog === "text" && <TextDialog onGo={(title, source) => (setDialog(null), go(`/doc/${createDoc({ title, source, kind: "text", folderId })}`))} />}
-          {dialog === "youtube" && <YouTubeDialog initial={ytPrefill} onGo={(title, source, url) => (setDialog(null), setYtPrefill(""), go(`/doc/${createDoc({ title, source, kind: "youtube", sourceUrl: url, folderId })}`))} />}
-          {dialog === "record" && <Recorder busy={false} onDone={(title, source, audio) => (setDialog(null), go(`/doc/${createDoc({ title, source, kind: "audio", audio, folderId })}`))} />}
-          <button className="link" onClick={() => setDialog(null)}>Close</button>
+      {recording && (
+        <Modal onClose={() => setRecording(false)} label="Record lecture">
+          <Recorder busy={false} onDone={(title, source, audio) => (setRecording(false), go(`/doc/${createDoc({ title, source, kind: "audio", audio, folderId })}`))} />
+          <button className="link" onClick={() => setRecording(false)}>Close</button>
         </Modal>
       )}
     </div>
@@ -189,68 +218,58 @@ export function Home() {
 
 const greeting = () => {
   const h = new Date().getHours();
-  return h < 5 ? "Burning the midnight oil" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+  return h < 5 ? "Late one" : h < 12 ? "Morning" : h < 18 ? "Afternoon" : "Evening";
 };
 
-function Tile({ icon, title, sub, onClick, accent }: { icon: React.ReactNode; title: string; sub: string; onClick: () => void; accent?: boolean }) {
-  return (
-    <button className={"tile" + (accent ? " accent" : "")} onClick={onClick}>
-      <span className="tile-ico">{icon}</span>
-      <b>{title}</b>
-      <span className="small">{sub}</span>
-    </button>
-  );
-}
+const KIND: Record<string, string> = { youtube: "Video", audio: "Lecture", file: "File", text: "Text", topic: "Topic", image: "Scan", blank: "Note" };
 
-function DocCard({ id }: { id: string }) {
-  const { docs, meta } = useStore();
-  const d = docs.find((x) => x.id === id)!;
+function DocRow({ d }: { d: Doc }) {
+  const { meta } = useStore();
   const [menu, setMenu] = useState(false);
   const due = dueCount(d.cards);
-  const progress = d.course.length ? d.course.filter((s) => s.done).length / d.course.length : null;
+  const done = d.course.filter((s) => s.done).length;
   return (
-    <div className="card doc" tabIndex={0} role="link" onClick={() => go(`/doc/${d.id}`)} onKeyDown={(e) => e.key === "Enter" && go(`/doc/${d.id}`)}>
-      <div className="doc-ico">{d.course.length ? <Compass size={18} /> : d.kind === "youtube" ? <Video size={18} /> : d.kind === "audio" ? <Mic size={18} /> : <BookOpen size={18} />}</div>
-      <div className="doc-title">{d.pinned && <Pin size={12} />} {d.title}</div>
-      <div className="muted small">
-        {d.cards.length} cards · {d.quiz.length} questions
-        {due > 0 && <span className="due-pill">{due} due</span>}
-      </div>
-      {progress !== null && <div className="bar"><div style={{ width: `${progress * 100}%` }} /></div>}
-      <div className="muted small">{new Date(d.updatedAt).toLocaleDateString()}</div>
-      <button className="icon-btn kebab" aria-label="Document menu" onClick={(e) => (e.stopPropagation(), setMenu(!menu))}>
-        <MoreHorizontal size={16} />
-      </button>
-      {menu && (
-        <div className="menu" onClick={(e) => e.stopPropagation()} onMouseLeave={() => setMenu(false)}>
-          <button onClick={() => (updateDoc(d.id, { pinned: !d.pinned }), setMenu(false))}><Pin size={14} /> {d.pinned ? "Unpin" : "Pin"}</button>
-          <button
-            onClick={async () => {
-              setMenu(false);
-              const name = await promptDialog("Rename", "Title", d.title);
-              if (name) updateDoc(d.id, { title: name });
-            }}
-          >
-            Rename
-          </button>
-          <label className="menu-select">
-            Move to
-            <select value={d.folderId ?? ""} onChange={(e) => (updateDoc(d.id, { folderId: e.target.value }), setMenu(false))}>
-              {meta.folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
-            </select>
-          </label>
-          <button
-            className="danger-text"
-            onClick={async () => {
-              setMenu(false);
-              if (await confirmDialog("Delete document?", `“${d.title}” and its flashcards, quiz and audio will be removed.`, "Delete", true)) deleteDoc(d.id);
-            }}
-          >
-            <Trash2 size={14} /> Delete
-          </button>
-        </div>
-      )}
-    </div>
+    <li className="doc-row" tabIndex={0} onClick={() => go(`/doc/${d.id}`)} onKeyDown={(e) => e.key === "Enter" && go(`/doc/${d.id}`)}>
+      <span className="row-kind">{d.course.length ? "Course" : KIND[d.kind] ?? "Doc"}</span>
+      <span className="row-title">{d.pinned && <Pin size={12} />} {d.title}</span>
+      <span className="row-meta">
+        {d.cards.length} cards · {d.quiz.length} q{d.course.length ? ` · ${done}/${d.course.length} lessons` : ""}
+      </span>
+      <span className="row-due">{due > 0 && <span className="due-pill">{due} due</span>}</span>
+      <span className="row-date">{new Date(d.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+      <span className="menu-wrap" onClick={(e) => e.stopPropagation()}>
+        <button className="icon-btn" aria-label="Document menu" onClick={() => setMenu(!menu)}><MoreHorizontal size={16} /></button>
+        {menu && (
+          <div className="menu right" onMouseLeave={() => setMenu(false)}>
+            <button onClick={() => (updateDoc(d.id, { pinned: !d.pinned }), setMenu(false))}><Pin size={14} /> {d.pinned ? "Unpin" : "Pin"}</button>
+            <button
+              onClick={async () => {
+                setMenu(false);
+                const name = await promptDialog("Rename", "Title", d.title);
+                if (name) updateDoc(d.id, { title: name });
+              }}
+            >
+              Rename
+            </button>
+            <label className="menu-select">
+              Move to
+              <select value={d.folderId ?? ""} onChange={(e) => (updateDoc(d.id, { folderId: e.target.value }), setMenu(false))}>
+                {meta.folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+              </select>
+            </label>
+            <button
+              className="danger-text"
+              onClick={async () => {
+                setMenu(false);
+                if (await confirmDialog("Delete document?", `“${d.title}” and its flashcards, quiz and audio will be removed.`, "Delete", true)) deleteDoc(d.id);
+              }}
+            >
+              <Trash2 size={14} /> Delete
+            </button>
+          </div>
+        )}
+      </span>
+    </li>
   );
 }
 
@@ -267,80 +286,12 @@ function Heatmap({ activity }: { activity: Record<string, number> }) {
   if (!cells.some((c) => c.n)) return null;
   return (
     <section className="heat" aria-label="Study activity, last 16 weeks">
-      <h3>Study activity</h3>
+      <p className="eyebrow">Study activity · 16 weeks</p>
       <div className="heat-grid">
         {cells.map((c) => (
           <i key={c.k} title={`${c.k}: ${c.n}`} className={`l${c.n === 0 ? 0 : c.n < 5 ? 1 : c.n < 15 ? 2 : c.n < 30 ? 3 : 4}`} />
         ))}
       </div>
     </section>
-  );
-}
-
-function TextDialog({ onGo }: { onGo: (title: string, source: string) => void }) {
-  const [title, setTitle] = useState("");
-  const [text, setText] = useState("");
-  const ok = text.trim().length >= 40;
-  return (
-    <>
-      <h2>Paste text</h2>
-      <input aria-label="Title" placeholder="Title (optional)" value={title} onChange={(e) => setTitle(e.target.value)} />
-      <textarea autoFocus rows={11} aria-label="Source text" placeholder="Paste lecture notes, an article, a textbook chapter, a transcript…" value={text} onChange={(e) => setText(e.target.value)} />
-      <div className="row">
-        <button className="primary" disabled={!ok} onClick={() => onGo(title.trim() || guessTitle(text), text)}>Generate study materials</button>
-        {!ok && text.length > 0 && <span className="muted small">Add a little more text (40+ characters).</span>}
-      </div>
-    </>
-  );
-}
-
-const guessTitle = (t: string) => t.trim().split(/[\n.!?]/)[0].slice(0, 60) || "Untitled";
-
-function YouTubeDialog({ initial, onGo }: { initial: string; onGo: (title: string, source: string, url: string) => void }) {
-  const [url, setUrl] = useState(initial);
-  const [busy, setBusy] = useState(false);
-  const [fail, setFail] = useState<{ error: string; title?: string } | null>(null);
-  const [pasted, setPasted] = useState("");
-
-  async function fetchIt(u = url) {
-    if (!isYouTube(u)) return setFail({ error: "That doesn't look like a YouTube link." });
-    setBusy(true);
-    setFail(null);
-    const r = await fetchYouTube(u);
-    setBusy(false);
-    if (r.ok) onGo(r.data.title, r.data.text, u.trim());
-    else setFail(r);
-  }
-  useEffect(() => {
-    if (initial) void fetchIt(initial);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  return (
-    <>
-      <h2>Import from YouTube</h2>
-      <input autoFocus aria-label="YouTube URL" placeholder="https://www.youtube.com/watch?v=…" value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => e.key === "Enter" && fetchIt()} />
-      <button className="primary" disabled={busy || !url.trim()} onClick={() => fetchIt()}>
-        {busy ? <><span className="spinner" /> Fetching transcript…</> : "Get transcript & generate"}
-      </button>
-      {fail && (
-        <div className="callout warn">
-          <div>
-            <b>{fail.error}</b>
-            {!(window as any).turbogoo?.desktop && (
-              <p className="small">
-                Tip: the TurboGoo <b>desktop app</b> fetches transcripts from your own connection, which YouTube allows. Websites hosted in the cloud are often blocked.
-              </p>
-            )}
-            <p className="small">
-              You can still import it: on YouTube open the video, click <b>…more</b> under the title → <b>Show transcript</b>, select all the text, and paste it here. Timestamps are removed automatically.
-            </p>
-            <textarea rows={6} aria-label="Pasted transcript" placeholder="Paste transcript…" value={pasted} onChange={(e) => setPasted(e.target.value)} />
-            <button className="primary" disabled={cleanTranscript(pasted).length < 40} onClick={() => onGo(fail.title || "YouTube video", cleanTranscript(pasted), url.trim())}>
-              Use pasted transcript
-            </button>
-          </div>
-        </div>
-      )}
-    </>
   );
 }

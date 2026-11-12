@@ -50,7 +50,7 @@ export function Chat({ doc, draft, clearDraft }: { doc: Doc; draft: string; clea
     setLive("");
     ctl.current = new AbortController();
     try {
-      const r = await chat(settings, doc.source, doc.notes, doc.chat, q, setLive, { signal: ctl.current.signal });
+      const r = await chat(settings, doc.source, doc.notes, doc.chat, q, setLive, { signal: ctl.current.signal, subject: doc.subject });
       updateDoc(doc.id, { chat: [...history, { role: "assistant", text: r.text, sources: r.sources }] });
     } catch (e) {
       const partial = live ?? "";

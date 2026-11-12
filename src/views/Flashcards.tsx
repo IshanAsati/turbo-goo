@@ -14,7 +14,7 @@ export const ankiTsv = (cards: Card[]) => cards.map((c) => `${c.front.replace(/[
 export function download(name: string, text: string, type = "text/plain") {
   const url = URL.createObjectURL(new Blob([text], { type }));
   Object.assign(document.createElement("a"), { href: url, download: name }).click();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 30_000); // revoking synchronously can cancel the download
 }
 
 export function Flashcards({ doc }: { doc: Doc }) {
@@ -96,7 +96,7 @@ function Browse({ doc }: { doc: Doc }) {
                 <input aria-label="Front" value={ef} onChange={(e) => setEf(e.target.value)} />
                 <textarea aria-label="Back" rows={2} value={eb} onChange={(e) => setEb(e.target.value)} />
                 <div className="row">
-                  <button className="primary" onClick={() => (updateDoc(doc.id, (d) => ({ cards: d.cards.map((x) => (x.id === c.id ? { ...x, front: ef, back: eb } : x)) })), setEditing(null))}>Save</button>
+                  <button className="primary" disabled={!ef.trim() || !eb.trim()} onClick={() => (updateDoc(doc.id, (d) => ({ cards: d.cards.map((x) => (x.id === c.id ? { ...x, front: ef.trim(), back: eb.trim() } : x)) })), setEditing(null))}>Save</button>
                   <button onClick={() => setEditing(null)}>Cancel</button>
                 </div>
               </div>

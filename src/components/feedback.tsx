@@ -49,12 +49,14 @@ const emitD = () => dl.forEach((l) => l());
 
 export const confirmDialog = (title: string, body: string, confirm = "Confirm", danger = false) =>
   new Promise<boolean>((resolve) => {
+    req?.resolve(false); // a dialog opened over another one: settle the old promise instead of leaving it pending forever
     req = { title, body, confirm, danger, resolve: (v) => resolve(v === true) };
     emitD();
   });
 
 export const promptDialog = (title: string, label: string, value = "", confirm = "Save", placeholder = "") =>
   new Promise<string | null>((resolve) => {
+    req?.resolve(false);
     req = { title, input: { label, value, placeholder }, confirm, resolve: (v) => resolve(typeof v === "string" ? v : null) };
     emitD();
   });
@@ -98,20 +100,40 @@ export function DialogHost() {
 
 export function Modal({ children, onClose, label, narrow }: { children: React.ReactNode; onClose: () => void; label: string; narrow?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose; // callers pass a fresh closure every render; depending on it re-ran the effect and stole focus
+  const prevFocus = useRef<HTMLElement | null>(typeof document === "undefined" ? null : (document.activeElement as HTMLElement | null)); // read at render: in StrictMode an effect-time read sees the dialog's own autofocused input
   useEffect(() => {
-    const prev = document.activeElement as HTMLElement | null;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const prev = prevFocus.current;
+    const me = ref.current;
+    if (me && !me.contains(document.activeElement)) (me.querySelector<HTMLElement>("[autofocus],input,textarea,select,button,[href]") ?? me).focus();
+    stack.push(me!);
+    const onKey = (e: KeyboardEvent) => {
+      if (stack[stack.length - 1] !== me) return; // only the top-most dialog reacts
+      if (e.key === "Escape") return void close.current();
+      if (e.key !== "Tab" || !me) return;
+      const f = [...me.querySelectorAll<HTMLElement>("a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex='-1'])")];
+      if (!f.length) return e.preventDefault();
+      const first = f[0];
+      const last = f[f.length - 1];
+      if (!me.contains(document.activeElement)) (e.preventDefault(), first.focus());
+      else if (e.shiftKey && document.activeElement === first) (e.preventDefault(), last.focus());
+      else if (!e.shiftKey && document.activeElement === last) (e.preventDefault(), first.focus());
+    };
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
-      prev?.focus?.();
+      stack.splice(stack.indexOf(me!), 1);
+      if (prev?.isConnected) prev.focus?.();
     };
-  }, [onClose]);
+  }, []);
   return (
-    <div className="modal" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div ref={ref} className={"dialog" + (narrow ? " narrow" : "")} role="dialog" aria-modal="true" aria-label={label}>
+    <div className="modal" onMouseDown={(e) => e.target === e.currentTarget && close.current()}>
+      <div ref={ref} className={"dialog" + (narrow ? " narrow" : "")} role="dialog" aria-modal="true" aria-label={label} tabIndex={-1}>
         {children}
       </div>
     </div>
   );
 }
+
+const stack: HTMLElement[] = [];

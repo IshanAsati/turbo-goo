@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Timer, XCircle } from "lucide-react";
 import { gradeOpen, sameAnswer } from "../lib/ai";
-import { moreQuiz } from "../lib/generate";
+import { cancelJob, moreQuiz } from "../lib/generate";
 import { newCard } from "../lib/srs";
 import { recordActivity, uid, updateDoc, useJob, useStore } from "../lib/store";
 import { shuffle } from "../lib/text";
@@ -103,6 +103,7 @@ export function Quiz({ doc }: { doc: Doc }) {
       <div className="empty-note">
         <p className="muted">{job ? "Writing questions…" : "No quiz questions yet."}</p>
         <button className="primary" disabled={!!job && !job.error} onClick={more}>Generate quiz</button>
+        {job && !job.error && <button onClick={() => cancelJob(doc.id + ":quiz")}>Cancel</button>}
       </div>
     );
 
@@ -128,6 +129,7 @@ export function Quiz({ doc }: { doc: Doc }) {
             </button>
           )}
           <button className="primary" disabled={!!job && !job.error} onClick={more}>{job && !job.error ? "Writing…" : "More questions"}</button>
+          {job && !job.error && <button onClick={() => cancelJob(doc.id + ":quiz")}>Cancel</button>}
         </div>
         {job?.error && <p className="error-text">{job.error}</p>}
       </div>

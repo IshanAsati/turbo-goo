@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { Download, Headphones, Pause, Play, RefreshCw, Sparkles } from "lucide-react";
-import { speech, hasLLM } from "../lib/llm";
+import { Download, Headphones, Pause, Play, RefreshCw, Sparkles, X } from "lucide-react";
+import { cancelJob } from "../lib/generate";
+import { SOUND_TAGS, hasTTS, speech, ttsLabel } from "../lib/llm";
 import { useStore } from "../lib/store";
 import type { Doc, Job } from "../lib/types";
 import { toast } from "../components/feedback";
 
-const HD_VOICES = { Goo: "nova", Turbo: "onyx" } as const;
 
 export function Podcast({ doc, job, onGenerate }: { doc: Doc; job?: Job; onGenerate: () => void }) {
   const { settings } = useStore();
@@ -20,8 +20,11 @@ export function Podcast({ doc, job, onGenerate }: { doc: Doc; job?: Job; onGener
   const [hdProgress, setHdProgress] = useState<number | null>(null);
   const run = useRef(0); // playback token: bumping it cancels the current chain
   const audio = useRef<HTMLAudioElement | null>(null);
+  const hdCtl = useRef<AbortController | null>(null);
+  const audioUrl = useRef("");
+  const utter = useRef<SpeechSynthesisUtterance | null>(null); // Chrome can garbage-collect a playing utterance and never fire onend
   const supported = "speechSynthesis" in window;
-  const canHD = hasLLM(settings);
+  const canHD = hasTTS(settings);
 
   useEffect(() => {
     if (!supported) return;
@@ -39,22 +42,38 @@ export function Podcast({ doc, job, onGenerate }: { doc: Doc; job?: Job; onGener
   useEffect(
     () => () => {
       run.current++;
+      hdCtl.current?.abort();
       speechSynthesis?.cancel();
-      audio.current?.pause();
+      freeAudio();
     },
     [],
   );
   useEffect(() => {
     document.querySelector(".line.now")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [idx]);
+  // A new script invalidates playback position and any HD render of the old one.
   useEffect(() => {
+    hdCtl.current?.abort();
+    stop();
+    setIdx(-1);
     setHd(null);
-  }, [doc.podcast]);
+  }, [doc.podcast]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function freeAudio() {
+    const a = audio.current;
+    if (a) {
+      a.onended = a.onerror = null;
+      a.pause();
+    }
+    audio.current = null;
+    if (audioUrl.current) URL.revokeObjectURL(audioUrl.current);
+    audioUrl.current = "";
+  }
 
   function stop() {
     run.current++;
     speechSynthesis?.cancel();
-    audio.current?.pause();
+    freeAudio();
     setPlaying(false);
   }
 
@@ -71,19 +90,23 @@ export function Podcast({ doc, job, onGenerate }: { doc: Doc; job?: Job; onGener
       }
       setIdx(i);
       if (hd) {
-        const a = new Audio(URL.createObjectURL(hd[i]));
+        freeAudio();
+        const url = URL.createObjectURL(hd[i]);
+        audioUrl.current = url;
+        const a = new Audio(url);
         a.playbackRate = rate;
         audio.current = a;
         a.onended = () => step(i + 1);
         a.onerror = () => step(i + 1);
-        void a.play().catch(() => setPlaying(false));
+        void a.play().catch(() => token === run.current && stop());
         return;
       }
-      const u = new SpeechSynthesisUtterance(lines[i].text);
+      const u = new SpeechSynthesisUtterance(lines[i].text.replace(SOUND_TAGS, " "));
       const name = lines[i].host === "Goo" ? vGoo : vTurbo;
       u.voice = voices.find((v) => v.name === name) ?? null;
       u.rate = rate;
       u.pitch = voices.length < 2 ? (lines[i].host === "Goo" ? 1.15 : 0.85) : 1; // distinct personas even with one installed voice
+      utter.current = u;
       u.onend = () => step(i + 1);
       u.onerror = (e) => e.error !== "interrupted" && e.error !== "canceled" && step(i + 1);
       speechSynthesis.speak(u);
@@ -93,23 +116,32 @@ export function Podcast({ doc, job, onGenerate }: { doc: Doc; job?: Job; onGener
 
   async function makeHD() {
     setHdProgress(0);
+    const ctl = new AbortController();
+    hdCtl.current = ctl;
     try {
       const out: Blob[] = [];
       for (let i = 0; i < lines.length; i++) {
-        out.push(await speech(settings, lines[i].text, HD_VOICES[lines[i].host]));
+        out.push(await speech(settings, lines[i].text, lines[i].host === "Goo" ? settings.ttsVoiceA : settings.ttsVoiceB, ctl.signal));
         setHdProgress((i + 1) / lines.length);
       }
+      if (ctl.signal.aborted) return; // script was replaced or the view closed mid-render
       setHd(out);
-      toast("HD audio ready.", "ok");
+      toast(`${ttsLabel(settings)} audio ready.`, "ok");
     } catch (e) {
-      toast((e as Error).message, "error");
+      if (!ctl.signal.aborted) toast((e as Error).message, "error");
     } finally {
+      if (hdCtl.current === ctl) hdCtl.current = null;
       setHdProgress(null);
     }
   }
 
   if (job && !job.error)
-    return <div className="empty-note"><span className="spinner" /> {job.step}</div>;
+    return (
+      <div className="empty-note">
+        <span className="spinner" /> {job.step}
+        <button onClick={() => cancelJob(`${doc.id}:podcast`)}><X size={14} /> Cancel</button>
+      </div>
+    );
 
   if (!lines.length)
     return (
@@ -129,7 +161,7 @@ export function Podcast({ doc, job, onGenerate }: { doc: Doc; job?: Job; onGener
         </button>
         <div className="player-main">
           <b>{doc.title}</b>
-          <span className="muted small">{lines.length} lines · Goo &amp; Turbo · {hd ? "HD voices" : "browser voices"}</span>
+          <span className="muted small">{lines.length} lines · Goo &amp; Turbo · {hd ? `${ttsLabel(settings)} voices` : "browser voices"}</span>
           <div className="progress-line"><div style={{ width: `${((idx + 1) / lines.length) * 100}%` }} /></div>
         </div>
         <label className="small">Speed
@@ -148,8 +180,8 @@ export function Podcast({ doc, job, onGenerate }: { doc: Doc; job?: Job; onGener
         )}
         <span className="spacer" />
         {canHD && !hd && (
-          <button onClick={makeHD} disabled={hdProgress !== null} title="Uses your provider's text-to-speech (costs a few cents)">
-            {hdProgress !== null ? `Rendering ${Math.round(hdProgress * 100)}%` : "Render HD voices"}
+          <button onClick={makeHD} disabled={hdProgress !== null} title={`Renders every line with ${settings.ttsModel} (Settings → Text-to-speech)`}>
+            {hdProgress !== null ? `Rendering ${Math.round(hdProgress * 100)}%` : `Render with ${ttsLabel(settings)}`}
           </button>
         )}
         {hd && (
@@ -157,12 +189,13 @@ export function Podcast({ doc, job, onGenerate }: { doc: Doc; job?: Job; onGener
             onClick={() => {
               const url = URL.createObjectURL(new Blob(hd, { type: "audio/mpeg" }));
               Object.assign(document.createElement("a"), { href: url, download: `${doc.title}-podcast.mp3` }).click();
-              URL.revokeObjectURL(url);
+              setTimeout(() => URL.revokeObjectURL(url), 30_000); // revoking synchronously can cancel the download
             }}
           >
             <Download size={15} /> Download mp3
           </button>
         )}
+        {hdProgress !== null && <button onClick={() => hdCtl.current?.abort()}><X size={14} /> Cancel render</button>}
         <button onClick={onGenerate}><RefreshCw size={15} /> New script</button>
       </div>
 

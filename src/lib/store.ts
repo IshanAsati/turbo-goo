@@ -1,18 +1,27 @@
 import { useSyncExternalStore } from "react";
 import { del, get, getMany, keys, set } from "idb-keyval";
-import type { AppState, Doc, Job, Meta, Settings } from "./types";
+import type { AppState, Doc, Job, Meta, Settings, Thread } from "./types";
 
 const META_KEY = "turbogoo:meta";
 const SETTINGS_KEY = "turbogoo:settings";
+const THREADS_KEY = "turbogoo:threads";
 const DOC_PREFIX = "doc:";
 
 export const defaultSettings: Settings = {
-  baseUrl: "https://api.openai.com/v1",
+  baseUrl: "https://ai-gateway.vercel.sh/v1",
   apiKey: "",
-  model: "gpt-4o",
-  fastModel: "gpt-4o-mini",
+  model: "nvidia/nemotron-3.5-lightning-free",
+  fastModel: "nvidia/nemotron-3.5-lightning-free",
+  reasoning: "low",
+  curriculum: "cbse10",
+  sttBaseUrl: "",
+  sttApiKey: "",
   sttModel: "whisper-1",
+  ttsBaseUrl: "",
+  ttsApiKey: "",
   ttsModel: "tts-1",
+  ttsVoiceA: "nova",
+  ttsVoiceB: "onyx",
   theme: "system",
   useHDVoices: false,
 };
@@ -33,9 +42,10 @@ function readLS<T>(key: string, fallback: T): T {
   }
 }
 
-let state: AppState = { docs: [], meta: readLS(META_KEY, defaultMeta), settings: readLS(SETTINGS_KEY, defaultSettings), ready: false };
+let state: AppState = { docs: [], threads: [], meta: readLS(META_KEY, defaultMeta), settings: readLS(SETTINGS_KEY, defaultSettings), ready: false };
 const listeners = new Set<() => void>();
 const saved = new Map<string, Doc>(); // last persisted object per doc id (identity check = dirty check)
+let savedThreads: Thread[] | null = null;
 let timer: ReturnType<typeof setTimeout> | undefined;
 
 function emit() {
@@ -49,6 +59,10 @@ async function flush() {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
   } catch {
     /* storage disabled */
+  }
+  if (state.ready && savedThreads !== state.threads) {
+    await set(THREADS_KEY, state.threads);
+    savedThreads = state.threads;
   }
   const ids = new Set(state.docs.map((d) => d.id));
   for (const d of state.docs) {
@@ -87,7 +101,9 @@ export async function hydrate() {
     const docs = (await getMany<Doc>(ks)).filter((d): d is Doc => !!d).map(normalizeDoc);
     docs.forEach((d) => saved.set(d.id, d));
     docs.sort((a, b) => b.updatedAt - a.updatedAt);
-    state = { ...state, docs, ready: true };
+    const threads = ((await get<Thread[]>(THREADS_KEY)) ?? []).sort((a, b) => b.updatedAt - a.updatedAt);
+    savedThreads = threads;
+    state = { ...state, docs, threads, ready: true };
   } catch (e) {
     console.error("hydrate failed", e);
     state = { ...state, ready: true };
@@ -157,6 +173,26 @@ export function setSettings(patch: Partial<Settings>) {
 
 export function setMeta(fn: (m: Meta) => Meta) {
   setState((s) => ({ ...s, meta: fn(s.meta) }));
+}
+
+/* ---------------- standalone chat threads ---------------- */
+
+export function addThread(t: Partial<Thread> = {}): Thread {
+  const now = Date.now();
+  const thread: Thread = { id: uid(), title: "New chat", messages: [], attachments: [], createdAt: now, updatedAt: now, ...t };
+  setState((s) => ({ ...s, threads: [thread, ...s.threads] }));
+  return thread;
+}
+
+export function updateThread(id: string, patch: Partial<Thread> | ((t: Thread) => Partial<Thread>)) {
+  setState((s) => ({
+    ...s,
+    threads: s.threads.map((t) => (t.id === id ? { ...t, ...(typeof patch === "function" ? patch(t) : patch), updatedAt: Date.now() } : t)),
+  }));
+}
+
+export function deleteThread(id: string) {
+  setState((s) => ({ ...s, threads: s.threads.filter((t) => t.id !== id) }));
 }
 
 export function applyTheme(t: Settings["theme"]) {

@@ -1,13 +1,15 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import { Compass, Flame, Layers, Library, Search, Settings as Cog, Waves, Zap } from "lucide-react";
+import { Compass, Layers, Library, MessagesSquare, Moon, Search, Settings as Cog, Sun, Waves } from "lucide-react";
 import { go, useRoute } from "./lib/nav";
-import { liveStreak, useStore } from "./lib/store";
+import { liveStreak, setSettings, useStore } from "./lib/store";
 import { dueCount } from "./lib/srs";
 import { DialogHost, Toaster } from "./components/feedback";
 import { Palette } from "./components/Palette";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Home } from "./views/Home";
 
 const DocView = lazy(() => import("./views/DocView").then((m) => ({ default: m.DocView })));
+const ChatPage = lazy(() => import("./views/ChatPage").then((m) => ({ default: m.ChatPage })));
 const LearnHome = lazy(() => import("./views/Learn").then((m) => ({ default: m.LearnHome })));
 const Stream = lazy(() => import("./views/Stream").then((m) => ({ default: m.Stream })));
 const Review = lazy(() => import("./views/Review").then((m) => ({ default: m.Review })));
@@ -15,6 +17,7 @@ const SettingsView = lazy(() => import("./views/SettingsView").then((m) => ({ de
 
 const NAV = [
   { path: "/", icon: Library, label: "Library" },
+  { path: "/chat", icon: MessagesSquare, label: "Chat" },
   { path: "/review", icon: Layers, label: "Review" },
   { path: "/learn", icon: Compass, label: "Learn" },
   { path: "/stream", icon: Waves, label: "Stream" },
@@ -40,11 +43,12 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  if (!ready) return <div className="splash"><Zap size={32} /></div>;
+  if (!ready) return <div className="splash"><span className="wordmark">TurboGoo</span></div>;
 
   const due = docs.reduce((n, d) => n + dueCount(d.cards), 0);
   let view;
   if (a === "doc" && id) view = <DocView key={id} id={id} initialTab={tabParam ?? undefined} />;
+  else if (a === "chat") view = <ChatPage id={id || undefined} />;
   else if (a === "learn") view = <LearnHome />;
   else if (a === "stream") view = <Stream />;
   else if (a === "review") view = <Review />;
@@ -53,29 +57,36 @@ export function App() {
 
   const active = "/" + (a === "doc" || !a ? "" : a);
   const streak = liveStreak(meta);
+  const dark = typeof document !== "undefined" && document.documentElement.dataset.theme === "dark";
   return (
-    <div className="shell">
+    <div className={"shell" + (a === "chat" ? " full" : "")}>
       <aside className="sidebar">
         <button className="brand" onClick={() => go("/")} aria-label="TurboGoo home">
-          <span className="logo"><Zap size={18} fill="currentColor" /></span> TurboGoo
+          <span className="wordmark">Turbo<em>Goo</em></span>
         </button>
         <button className="search-btn" onClick={() => setPalette(true)}>
-          <Search size={15} /> Search <kbd>Ctrl K</kbd>
+          <Search size={14} /> <span>Find anything</span> <kbd>Ctrl K</kbd>
         </button>
         <nav aria-label="Main">
-          {NAV.map(({ path, icon: Icon, label }) => (
+          {NAV.map(({ path, icon: Icon, label }, i) => (
             <button key={path} className={"nav" + (active === path ? " on" : "")} onClick={() => go(path)} aria-current={active === path ? "page" : undefined}>
-              <Icon size={18} /> <span>{label}</span>
+              <span className="nav-n" aria-hidden>{String(i + 1).padStart(2, "0")}</span>
+              <Icon size={16} /> <span>{label}</span>
               {path === "/review" && due > 0 && <span className="badge">{due}</span>}
             </button>
           ))}
         </nav>
-        <div className="streak" title={`Best streak: ${meta.streak.best} days`}>
-          <Flame size={18} className={streak ? "hot" : ""} /> <b>{streak}</b> day streak
+        <div className="side-foot">
+          <span className="streak" title={`Best streak: ${meta.streak.best} days`}>
+            <b>{streak}</b> day streak
+          </span>
+          <button className="icon-btn" aria-label={dark ? "Switch to light theme" : "Switch to dark theme"} onClick={() => setSettings({ theme: dark ? "light" : "dark" })}>
+            {dark ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
         </div>
       </aside>
       <main className="main">
-        <Suspense fallback={<div className="page muted">Loading…</div>}>{view}</Suspense>
+        <Suspense fallback={<div className="page muted">Loading…</div>}><ErrorBoundary resetKey={`${a}/${id ?? ""}`}>{view}</ErrorBoundary></Suspense>
       </main>
       <Palette open={palette} onClose={() => setPalette(false)} />
       <Toaster />

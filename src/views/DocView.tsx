@@ -4,6 +4,8 @@ import { go } from "../lib/nav";
 import { cancelJob, generateMissing, generatePodcast, generateCourse, regenerate } from "../lib/generate";
 import { deleteDoc, updateDoc, useJob, useStore } from "../lib/store";
 import { dueCount } from "../lib/srs";
+import { SUBJECT_LIST } from "../lib/subjects";
+import type { Subject } from "../lib/types";
 import { confirmDialog } from "../components/feedback";
 import { Flashcards } from "./Flashcards";
 import { Quiz } from "./Quiz";
@@ -34,7 +36,7 @@ export function DocView({ id, initialTab }: { id: string; initialTab?: string })
     );
   }
 
-  const notesStreaming = !!job && !job.error && !job.done && job.step.startsWith("Writing your notes");
+  const notesStreaming = !!job && !job.error && !job.done && /Writing your notes|thinking/.test(job.step);
   const count: Partial<Record<Tab, number>> = { Flashcards: doc.cards.length, Quiz: doc.quiz.length, Course: doc.course.length || undefined, Podcast: doc.podcast.length || undefined };
   const due = dueCount(doc.cards);
   const ask = (q: string) => (setDraft(q), setTab("Chat"));
@@ -44,6 +46,9 @@ export function DocView({ id, initialTab }: { id: string; initialTab?: string })
       <div className="doc-head">
         <button className="icon-btn" aria-label="Back to library" onClick={() => go("/")}><ArrowLeft size={20} /></button>
         <input className="title-input" aria-label="Document title" value={doc.title} onChange={(e) => updateDoc(doc.id, { title: e.target.value })} />
+        <select className="subject-select" aria-label="Subject" title="Subject: used for new questions, chat and regenerated materials" value={doc.subject ?? "general"} onChange={(e) => updateDoc(doc.id, { subject: e.target.value as Subject })}>
+          {SUBJECT_LIST.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
+        </select>
         <div className="menu-wrap">
           <button onClick={() => setMenu(!menu)} aria-haspopup="menu" aria-expanded={menu}>Regenerate <ChevronDown size={14} /></button>
           {menu && (
@@ -82,7 +87,7 @@ export function DocView({ id, initialTab }: { id: string; initialTab?: string })
           {job.error ? (
             <button onClick={() => generateMissing(doc.id)}>Retry</button>
           ) : (
-            !job.done && <button className="icon-btn" aria-label="Cancel" onClick={() => cancelJob(doc.id)}><X size={16} /></button>
+            !job.done && <button onClick={() => cancelJob(doc.id)}><X size={14} /> Cancel</button>
           )}
         </div>
       )}

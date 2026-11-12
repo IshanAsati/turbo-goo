@@ -52,9 +52,11 @@
       "artifactName": "TurboGoo-${version}-${arch}.${ext}"
     }
   },
-  "dependencies": {},
   "devDependencies": {
+    "@fontsource-variable/fraunces": "^5.3.0",
+    "@fontsource-variable/instrument-sans": "^5.3.0",
     "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "@types/react": "19.1.8",
     "@types/react-dom": "19.1.6",
     "@vitejs/plugin-react": "4.6.0",

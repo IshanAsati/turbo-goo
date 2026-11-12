@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { del, get, getMany, set } from "idb-keyval";
 import { Flag, Mic, Pause, Play, Square, TriangleAlert } from "lucide-react";
-import { hasLLM, transcribe } from "../lib/llm";
+import { hasSTT, transcribe } from "../lib/llm";
 import { getState, uid } from "../lib/store";
 import { toast } from "../components/feedback";
 
@@ -46,6 +46,10 @@ export function Recorder({ onDone, busy }: { onDone: (title: string, transcript:
   const textRef = useRef("");
   const secsRef = useRef(0);
   const blobs = useRef<Blob[]>([]);
+  const pending = useRef<Promise<unknown>>(Promise.resolve()); // serialised IndexedDB writes
+  const alive = useRef(true);
+  const finishing = useRef(false);
+  const warned = useRef(false);
   textRef.current = text;
   secsRef.current = secs;
 
@@ -62,7 +66,7 @@ export function Recorder({ onDone, busy }: { onDone: (title: string, transcript:
 
   const persistMeta = useCallback(() => {
     meta.current = { ...meta.current, transcript: textRef.current, secs: secsRef.current };
-    void set(META, meta.current);
+    return set(META, meta.current); // returned so the chained write queue waits for it
   }, []);
 
   const teardown = useCallback(() => {
@@ -80,7 +84,13 @@ export function Recorder({ onDone, busy }: { onDone: (title: string, transcript:
     setInterim("");
   }, []);
 
-  useEffect(() => () => teardown(), [teardown]);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+      teardown();
+    };
+  }, [teardown]);
 
   async function start() {
     setErr("");
@@ -91,17 +101,36 @@ export function Recorder({ onDone, busy }: { onDone: (title: string, transcript:
       setErr("Microphone access was blocked. Allow it in your browser's address bar, or type/paste a transcript below.");
       return;
     }
+    if (!alive.current) return media.getTracks().forEach((t) => t.stop()); // left the page while the permission prompt was open
     stream.current = media;
     meta.current = { session: uid(), chunks: 0, transcript: text, secs: 0, startedAt: Date.now() };
     blobs.current = [];
+    setHasRecovered(undefined); // a previously recovered clip must not be submitted in place of this recording
 
-    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find((m) => MediaRecorder.isTypeSupported(m));
-    const rec = new MediaRecorder(media, { ...(mime ? { mimeType: mime } : {}), audioBitsPerSecond: 24000 }); // ~11 MB/hour: fits Whisper's 25 MB limit for ~2 h
+    let rec: MediaRecorder;
+    try {
+      const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find((m) => MediaRecorder.isTypeSupported(m));
+      rec = new MediaRecorder(media, { ...(mime ? { mimeType: mime } : {}), audioBitsPerSecond: 24000 }); // ~11 MB/hour: fits Whisper's 25 MB limit for ~2 h
+    } catch {
+      media.getTracks().forEach((t) => t.stop()); // otherwise the mic stays live with nothing recording
+      stream.current = null;
+      setErr("This browser can't record audio. Type or paste a transcript below instead.");
+      return;
+    }
+    const session = meta.current.session;
     rec.ondataavailable = (e) => {
       if (!e.data.size) return;
       blobs.current.push(e.data);
       const n = meta.current.chunks++;
-      void set(chunkKey(meta.current.session, n), e.data).then(persistMeta); // flushed to disk as it records
+      // flushed to disk as it records; writes are chained so the final chunk is always settled before the session is cleared
+      pending.current = pending.current
+        .then(() => set(chunkKey(session, n), e.data))
+        .then(persistMeta)
+        .catch(() => {
+          if (warned.current) return;
+          warned.current = true;
+          toast("Couldn't save the recording to your device (storage full or blocked). Crash recovery is off for this session.", "error");
+        });
     };
     rec.start(5000);
     mr.current = rec;
@@ -130,6 +159,7 @@ export function Recorder({ onDone, busy }: { onDone: (title: string, transcript:
     } catch {
       /* not allowed */
     }
+    if (!alive.current) return teardown(); // unmounted while awaiting the wake lock
 
     startSpeech();
     setSecs(0);
@@ -153,14 +183,25 @@ export function Recorder({ onDone, busy }: { onDone: (title: string, transcript:
       setInterim(tmp);
     };
     r.onend = () => {
-      if (want.current)
+      if (want.current && sr.current === r) // a stale recogniser (pause then quick resume) must not restart and double the transcript
         try {
           r.start(); // browsers end recognition on silence; keep it going
         } catch {
           /* already started */
         }
     };
-    r.onerror = (e: any) => e?.error === "not-allowed" && setErr("Speech recognition was blocked by the browser.");
+    r.onerror = (e: any) => {
+      const code = e?.error;
+      if (code === "not-allowed" || code === "service-not-allowed" || code === "audio-capture" || code === "network") {
+        want.current = false; // onend would otherwise restart it in a tight loop
+        setErr(code === "network" ? "Live transcription lost its connection to the browser's speech service. Audio is still recording." : "Speech recognition was blocked by the browser. Audio is still recording.");
+      }
+    };
+    try {
+      sr.current?.abort();
+    } catch {
+      /* already stopped */
+    }
     sr.current = r;
     want.current = true;
     try {
@@ -187,7 +228,16 @@ export function Recorder({ onDone, busy }: { onDone: (title: string, transcript:
   }
 
   async function finish() {
-    setWorking("Saving recording…");
+    if (finishing.current) return; // double click on Stop would call onDone twice
+    finishing.current = true;
+    try {
+      await finishInner();
+    } finally {
+      finishing.current = false;
+    }
+  }
+  async function finishInner() {
+    setWorking("Saving recordingâ€¦");
     const rec = mr.current;
     if (rec && rec.state !== "inactive") {
       await new Promise<void>((res) => {
@@ -204,8 +254,8 @@ export function Recorder({ onDone, busy }: { onDone: (title: string, transcript:
   async function complete(audio?: Blob) {
     let transcript = textRef.current.trim();
     try {
-      if (transcript.length < 40 && audio && hasLLM(getState().settings)) {
-        setWorking("Transcribing audio…");
+      if (transcript.length < 40 && audio && hasSTT(getState().settings)) {
+        setWorking("Transcribing audioâ€¦");
         transcript = (await transcribe(getState().settings, audio, "lecture.webm")).trim();
       }
     } catch (e) {
@@ -217,7 +267,9 @@ export function Recorder({ onDone, busy }: { onDone: (title: string, transcript:
       return;
     }
     onDone(`Lecture ${new Date().toLocaleDateString(undefined, { month: "short", day: "numeric" })}`, transcript, audio);
+    await pending.current; // let the last chunk and metadata writes land first, or they resurrect the session after it is cleared
     await clearSession(meta.current).catch(() => {});
+    setHasRecovered(undefined);
   }
 
   async function recover() {
@@ -256,7 +308,7 @@ export function Recorder({ onDone, busy }: { onDone: (title: string, transcript:
       )}
       <div className="rec-top">
         {phase === "idle" && (
-          <button className="rec-btn" onClick={start} disabled={busyNow}>
+          <button className="rec-btn" onClick={start} disabled={busyNow || !!recovered} title={recovered ? "Recover or discard the unfinished recording first" : undefined}>
             <Mic size={22} /> Start recording
           </button>
         )}
@@ -264,7 +316,7 @@ export function Recorder({ onDone, busy }: { onDone: (title: string, transcript:
           <>
             <button className="rec-btn live" onClick={finish}><Square size={20} fill="currentColor" /> Stop</button>
             <button onClick={pause}><Pause size={16} /> Pause</button>
-            <button onClick={flag} title="Mark a moment you didn't understand"><Flag size={16} /> Flag “?”</button>
+            <button onClick={flag} title="Mark a moment you didn't understand"><Flag size={16} /> Flag â€œ?â€</button>
           </>
         )}
         {phase === "paused" && (
@@ -283,7 +335,7 @@ export function Recorder({ onDone, busy }: { onDone: (title: string, transcript:
       {err && <div className="callout warn"><TriangleAlert size={18} /><div>{err}</div></div>}
       <textarea rows={10} aria-label="Transcript" placeholder="Live transcript appears here. You can edit it any time." value={text + (interim ? (text && !text.endsWith(" ") ? " " : "") + interim : "")} onChange={(e) => (setText(e.target.value), setInterim(""))} />
       <p className="muted small">
-        Saved to your device every few seconds, so a crash or closed tab won't lose the lecture. In class, just flag confusing moments with “?” and ask about them afterwards.
+        Saved to your device every few seconds, so a crash or closed tab won't lose the lecture. In class, just flag confusing moments with â€œ?â€ and ask about them afterwards.
         {Ctor && " Live transcription in Chrome/Edge is processed by the browser vendor's speech service."}
       </p>
       <button
@@ -291,7 +343,7 @@ export function Recorder({ onDone, busy }: { onDone: (title: string, transcript:
         disabled={busyNow || phase !== "idle" || (text.trim().length < 40 && !recoveredAudio)}
         onClick={() => complete(recoveredAudio ?? (blobs.current[0] && new Blob(blobs.current, { type: blobs.current[0].type })))}
       >
-        {working || (busy ? "Starting…" : "Generate study materials")}
+        {working || (busy ? "Startingâ€¦" : "Generate study materials")}
       </button>
     </>
   );

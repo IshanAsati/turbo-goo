@@ -26,4 +26,6 @@ function youtubeApi(): Plugin {
 export default defineConfig({
   plugins: [react(), youtubeApi()],
   build: { chunkSizeWarningLimit: 900 },
+  // .tools holds local helpers like the Chatterbox TTS server (a Python runtime with many thousands of files).
+  server: { watch: { ignored: ["**/.tools/**"] } },
 });

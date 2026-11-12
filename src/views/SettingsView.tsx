@@ -1,29 +1,63 @@
-import { useRef, useState } from "react";
-import { CheckCircle2, Download, Eye, EyeOff, Plug, Upload } from "lucide-react";
-import { PRESETS, hasLLM, testConnection } from "../lib/llm";
+import { useRef, useState, useSyncExternalStore } from "react";
+import { Activity, AudioLines, CheckCircle2, Download, Eye, EyeOff, GraduationCap, Plug, Upload, Volume2 } from "lucide-react";
+import { PRESETS, STT_PRESETS, TTS_PRESETS, getStats, hasLLM, hasSTT, hasTTS, isLocalUrl, listVoices, probeModels, subscribeStats, testConnection, testSTT, testTTS } from "../lib/llm";
 import { setSettings, setState, uid, useStore } from "../lib/store";
 import { confirmDialog, toast } from "../components/feedback";
 import { ankiTsv, download } from "./Flashcards";
-import type { Doc } from "../lib/types";
+import type { ProbeResult } from "../lib/llm";
+import type { Doc, Settings, Thread } from "../lib/types";
 
-export function SettingsView() {
-  const { settings: s, docs } = useStore();
-  const [show, setShow] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
-  const importRef = useRef<HTMLInputElement>(null);
+type Result = { ok: boolean; msg: string } | null;
 
-  async function test() {
-    setTesting(true);
+function useTest(fn: () => Promise<string>) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<Result>(null);
+  const run = async () => {
+    setBusy(true);
     setResult(null);
     try {
-      setResult({ ok: true, msg: await testConnection(s) });
+      setResult({ ok: true, msg: await fn() });
     } catch (e) {
       setResult({ ok: false, msg: (e as Error).message });
     } finally {
-      setTesting(false);
+      setBusy(false);
     }
-  }
+  };
+  return { busy, result, run };
+}
+
+function KeyInput({ value, onChange, placeholder = "sk-…" }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="input-row">
+      <input type={show ? "text" : "password"} autoComplete="off" value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value.trim())} />
+      <button className="icon-btn" aria-label={show ? "Hide key" : "Show key"} onClick={() => setShow(!show)}>{show ? <EyeOff size={16} /> : <Eye size={16} />}</button>
+    </div>
+  );
+}
+
+const ResultBox = ({ r }: { r: Result }) =>
+  r && (
+    <div className={"callout " + (r.ok ? "ok" : "warn")}>
+      {r.ok && <CheckCircle2 size={18} />}
+      <div>{r.msg}</div>
+    </div>
+  );
+
+const REASONING: { id: Settings["reasoning"]; label: string }[] = [
+  { id: "auto", label: "Provider default" },
+  { id: "none", label: "Off" },
+  { id: "low", label: "Low" },
+  { id: "medium", label: "Medium" },
+  { id: "high", label: "High" },
+];
+
+export function SettingsView() {
+  const { settings: s, docs, threads } = useStore();
+  const importRef = useRef<HTMLInputElement>(null);
+  const ai = useTest(() => testConnection(s));
+  const stt = useTest(() => testSTT(s));
+  const sttShared = !s.sttBaseUrl.trim();
 
   async function importBackup(f?: File) {
     if (!f) return;
@@ -33,56 +67,98 @@ export function SettingsView() {
       if (!Array.isArray(list) || !list.every((d) => d && typeof d.title === "string")) throw new Error("not a TurboGoo backup");
       const existing = new Set(docs.map((d) => d.id));
       const fresh = list.map((d) => ({ ...d, id: existing.has(d.id) ? uid() : d.id }));
-      setState((st) => ({ ...st, docs: [...fresh, ...st.docs] }));
-      toast(`Imported ${fresh.length} document${fresh.length === 1 ? "" : "s"}.`, "ok");
+      const th: Thread[] = Array.isArray(data.threads) ? data.threads.filter((t: Thread) => t && Array.isArray(t.messages)) : [];
+      const haveT = new Set(threads.map((t) => t.id));
+      setState((st) => ({ ...st, docs: [...fresh, ...st.docs], threads: [...th.map((t) => ({ ...t, id: haveT.has(t.id) ? uid() : t.id })), ...st.threads] }));
+      toast(`Imported ${fresh.length} document${fresh.length === 1 ? "" : "s"}${th.length ? ` and ${th.length} chats` : ""}.`, "ok");
     } catch {
       toast("That file isn't a valid TurboGoo backup.", "error");
     }
   }
 
   return (
-    <div className="page narrow">
-      <h1>Settings</h1>
+    <div className="page narrow settings">
+      <p className="eyebrow">Settings</p>
+      <h1 className="display">Set it up once.</h1>
 
       <section className="panel">
-        <h2><Plug size={18} /> AI provider</h2>
+        <h2><GraduationCap size={17} /> Study focus</h2>
         <p className="muted small">
-          TurboGoo works offline with a basic built-in engine. Connect any OpenAI-compatible provider for far better notes, quizzes, courses, tutoring, audio transcription and HD podcast voices.
-          Your key stays in this browser and is sent only to the Base URL below. There is no TurboGoo server in between.
+          Tunes how notes, flashcards, quizzes, courses and chat are written. With CBSE Class 10 on, every prompt uses NCERT terminology and board-paper style, plus subject-specific rules for Maths, Science, Social Science, English, Hindi and IT. The subject is picked on the home screen, or detected from your material.
+        </p>
+        <div className="seg" role="radiogroup" aria-label="Study focus">
+          {([["cbse10", "CBSE Class 10"], ["general", "General"]] as const).map(([id, label]) => (
+            <button key={id} role="radio" aria-checked={s.curriculum === id} className={s.curriculum === id ? "on" : ""} onClick={() => setSettings({ curriculum: id })}>{label}</button>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel">
+        <h2><Plug size={17} /> AI provider</h2>
+        <p className="muted small">
+          Works offline with a basic built-in engine. Connect any OpenAI-compatible provider for real notes, quizzes, courses and chat.
+          Your key stays on this device and is sent only to the Base URL below.
         </p>
         <div className="chips">
           {PRESETS.map((p) => (
-            <button key={p.name} className={"chip" + (s.baseUrl === p.baseUrl ? " on" : "")} title={p.note} onClick={() => setSettings({ baseUrl: p.baseUrl, model: p.model, fastModel: p.fast })}>
+            <button key={p.name} className={"chip" + (s.baseUrl === p.baseUrl ? " on" : "")} title={p.note} onClick={() => setSettings({ baseUrl: p.baseUrl, model: p.model, fastModel: p.fast, reasoning: p.reasoning })}>
               {p.name}
             </button>
           ))}
         </div>
         <label>Base URL<input value={s.baseUrl} onChange={(e) => setSettings({ baseUrl: e.target.value })} /></label>
-        <label>
-          API key
-          <div className="input-row">
-            <input type={show ? "text" : "password"} autoComplete="off" value={s.apiKey} placeholder="sk-…" onChange={(e) => setSettings({ apiKey: e.target.value.trim() })} />
-            <button className="icon-btn" aria-label={show ? "Hide key" : "Show key"} onClick={() => setShow(!show)}>{show ? <EyeOff size={16} /> : <Eye size={16} />}</button>
-          </div>
-        </label>
+        <label>API key<KeyInput value={s.apiKey} onChange={(v) => setSettings({ apiKey: v })} /></label>
         <div className="two">
-          <label>Smart model <small className="muted">notes, tutoring, courses, podcasts</small><input value={s.model} onChange={(e) => setSettings({ model: e.target.value })} /></label>
-          <label>Fast model <small className="muted">flashcards, quizzes, grading</small><input value={s.fastModel} onChange={(e) => setSettings({ fastModel: e.target.value })} /></label>
-          <label>Speech-to-text model<input value={s.sttModel} onChange={(e) => setSettings({ sttModel: e.target.value })} /></label>
-          <label>Text-to-speech model<input value={s.ttsModel} onChange={(e) => setSettings({ ttsModel: e.target.value })} /></label>
+          <label>Smart model <small className="muted">notes, chat, courses</small><input value={s.model} onChange={(e) => setSettings({ model: e.target.value })} /></label>
+          <label>Fast model <small className="muted">cards, quizzes, grading</small><input value={s.fastModel} onChange={(e) => setSettings({ fastModel: e.target.value })} /></label>
+        </div>
+        <ModelFinder />
+        <div className="field">
+          <span className="field-label">Thinking before answering <small className="muted">for reasoning models</small></span>
+          <div className="seg" role="radiogroup" aria-label="Reasoning effort">
+            {REASONING.map((r) => (
+              <button key={r.id} role="radio" aria-checked={s.reasoning === r.id} className={s.reasoning === r.id ? "on" : ""} onClick={() => setSettings({ reasoning: r.id })}>{r.label}</button>
+            ))}
+          </div>
+          <p className="muted small">Reasoning models write hidden “thinking” tokens before the first visible word. Low is the fastest that still writes good notes. Providers that don't support this ignore it.</p>
         </div>
         <div className="row">
-          <button className="primary" onClick={test} disabled={testing || !hasLLM(s)}>{testing ? "Testing…" : "Test connection"}</button>
-          <span className="small">{hasLLM(s) ? "AI mode" : "Offline mode (no key set)"}</span>
+          <button className="primary" onClick={ai.run} disabled={ai.busy || !hasLLM(s)}>{ai.busy ? "Testing…" : "Test connection"}</button>
+          <span className="small muted">{hasLLM(s) ? "AI mode" : "Offline mode (no key set)"}</span>
         </div>
-        {result && (
-          <div className={"callout " + (result.ok ? "ok" : "warn")}>
-            {result.ok && <CheckCircle2 size={18} />}
-            <div>{result.msg}</div>
-          </div>
-        )}
-        <p className="muted small">Routing cheap tasks to the fast model and reasoning-heavy ones to the smart model keeps cost low, the same trick large study apps use.</p>
+        <ResultBox r={ai.result} />
       </section>
+
+      <section className="panel">
+        <h2><AudioLines size={17} /> Speech-to-text</h2>
+        <p className="muted small">
+          Transcribes uploaded audio/video and recordings that the live transcript missed. Many chat providers (including AI Gateway and NVIDIA NIM here) don't offer Whisper, so you can use a separate one.
+        </p>
+        <div className="chips">
+          {STT_PRESETS.map((p) => (
+            <button key={p.name} className={"chip" + (s.sttBaseUrl === p.baseUrl ? " on" : "")} title={p.note} onClick={() => setSettings({ sttBaseUrl: p.baseUrl, sttModel: p.model })}>
+              {p.name}
+            </button>
+          ))}
+        </div>
+        {!sttShared && (
+          <>
+            <label>Base URL<input value={s.sttBaseUrl} onChange={(e) => setSettings({ sttBaseUrl: e.target.value })} /></label>
+            <label>API key<KeyInput value={s.sttApiKey} onChange={(v) => setSettings({ sttApiKey: v })} placeholder="Key for this speech provider" /></label>
+          </>
+        )}
+        <label>Model<input value={s.sttModel} onChange={(e) => setSettings({ sttModel: e.target.value })} /></label>
+        {sttShared && <p className="muted small">Using the AI provider's Base URL and key above.</p>}
+        <div className="row">
+          <button className="primary" onClick={stt.run} disabled={stt.busy || !hasSTT(s)}>{stt.busy ? "Testing…" : "Test speech-to-text"}</button>
+          <span className="small muted">{hasSTT(s) ? "Ready" : "Not set up"}</span>
+        </div>
+        <ResultBox r={stt.result} />
+      </section>
+
+      <TextToSpeech />
+
+      <RecentRequests />
 
       <section className="panel">
         <h2>Appearance</h2>
@@ -95,9 +171,9 @@ export function SettingsView() {
 
       <section className="panel">
         <h2>Your data</h2>
-        <p className="muted small">Everything lives on this device (IndexedDB). Nothing is uploaded except what you send to your AI provider. Back up regularly; clearing browser data deletes it.</p>
+        <p className="muted small">Everything lives on this device (IndexedDB). Nothing is uploaded except what you send to your AI providers. Back up regularly; clearing browser data deletes it.</p>
         <div className="row">
-          <button onClick={() => download("turbogoo-backup.json", JSON.stringify({ version: 2, docs }, null, 2), "application/json")}><Download size={15} /> Backup (JSON)</button>
+          <button onClick={() => download("turbogoo-backup.json", JSON.stringify({ version: 3, docs, threads }, null, 2), "application/json")}><Download size={15} /> Backup (JSON)</button>
           <button onClick={() => importRef.current?.click()}><Upload size={15} /> Restore</button>
           <input ref={importRef} hidden type="file" accept="application/json,.json" onChange={(e) => (importBackup(e.target.files?.[0]), (e.target.value = ""))} />
           <button onClick={() => download("turbogoo-all-flashcards.txt", ankiTsv(docs.flatMap((d) => d.cards)))}><Download size={15} /> All flashcards for Anki</button>
@@ -106,18 +182,171 @@ export function SettingsView() {
           <button
             className="danger"
             onClick={async () => {
-              if (await confirmDialog("Delete everything?", `All ${docs.length} documents, flashcards, and recordings will be permanently removed from this device.`, "Delete everything", true)) setState((st) => ({ ...st, docs: [] }));
+              if (await confirmDialog("Delete everything?", `All ${docs.length} documents, ${threads.length} chats, flashcards and recordings will be permanently removed from this device.`, "Delete everything", true)) setState((st) => ({ ...st, docs: [], threads: [] }));
             }}
           >
-            Delete all documents
+            Delete all documents and chats
           </button>
         </div>
       </section>
-
-      <section className="panel">
-        <h2>Pricing</h2>
-        <p className="muted">Free, with no paywall, quotas or hidden tiers. If you connect an AI provider you pay them directly for what you use.</p>
-      </section>
     </div>
+  );
+}
+
+/** Tests the provider's models with this key and lets you pick one that actually works (some providers enable models per account). */
+function ModelFinder() {
+  const { settings: s } = useStore();
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<[number, number]>([0, 0]);
+  const [found, setFound] = useState<ProbeResult[] | null>(null);
+  const ctl = useRef<AbortController | null>(null);
+  async function run() {
+    setBusy(true);
+    setFound(null);
+    ctl.current = new AbortController();
+    try {
+      setFound(await probeModels(s, (d, t) => setProgress([d, t]), ctl.current.signal));
+    } catch (e) {
+      toast((e as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="field">
+      <div className="row">
+        <button onClick={run} disabled={busy || !hasLLM(s)}>{busy ? `Testing models… ${progress[0]}/${progress[1]}` : "Find models that work on my account"}</button>
+        {busy && <button onClick={() => ctl.current?.abort()}>Stop</button>}
+        {!busy && found && <span className="small muted">{found.length ? `${found.length} work with this key, fastest first` : "None answered. Check the key and Base URL."}</span>}
+      </div>
+      {found && found.length > 0 && (
+        <ul className="pick-list model-list">
+          {found.map((m) => (
+            <li key={m.id}>
+              <span className="mono">{m.id}</span>
+              <small className="muted">{(m.ms / 1000).toFixed(1)} s</small>
+              <button className={s.model === m.id ? "on" : ""} onClick={() => setSettings({ model: m.id })}>Smart</button>
+              <button className={s.fastModel === m.id ? "on" : ""} onClick={() => setSettings({ fastModel: m.id })}>Fast</button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+/** Podcast voices: a separate TTS provider, including a local Chatterbox-Turbo server. */
+function TextToSpeech() {
+  const { settings: s } = useStore();
+  const [voices, setVoices] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const shared = !s.ttsBaseUrl.trim();
+  const local = !shared && isLocalUrl(s.ttsBaseUrl);
+  const tts = useTest(async () => {
+    const r = await testTTS(s);
+    const url = URL.createObjectURL(r.audio);
+    const a = new Audio(url);
+    a.onended = () => URL.revokeObjectURL(url);
+    void a.play().catch(() => {});
+    return r.msg;
+  });
+  async function loadVoices() {
+    setLoading(true);
+    try {
+      const v = await listVoices(s);
+      setVoices(v);
+      toast(v.length ? `Found ${v.length} voices.` : "This server doesn't list voices. Type the names instead.", v.length ? "ok" : "info");
+    } catch (e) {
+      toast(`Couldn't list voices: ${(e as Error).message}`, "error");
+    } finally {
+      setLoading(false);
+    }
+  }
+  return (
+    <section className="panel">
+      <h2><Volume2 size={17} /> Text-to-speech <span className="tally">podcast voices</span></h2>
+      <p className="muted small">
+        Renders the two podcast hosts as real voices and makes the mp3 download. Without this, podcasts use your browser's built-in voices.
+      </p>
+      <div className="chips">
+        {TTS_PRESETS.map((p) => (
+          <button key={p.name} className={"chip" + (s.ttsBaseUrl === p.baseUrl ? " on" : "")} title={p.note} onClick={() => (setVoices([]), setSettings({ ttsBaseUrl: p.baseUrl, ttsModel: p.model, ttsVoiceA: p.a, ttsVoiceB: p.b }))}>
+            {p.name}
+          </button>
+        ))}
+      </div>
+      {!shared && (
+        <>
+          <label>Base URL<input value={s.ttsBaseUrl} onChange={(e) => setSettings({ ttsBaseUrl: e.target.value })} /></label>
+          <label>API key {local && <small className="muted">not needed for a local server</small>}<KeyInput value={s.ttsApiKey} onChange={(v) => setSettings({ ttsApiKey: v })} placeholder={local ? "Leave empty" : "Key for this speech provider"} /></label>
+        </>
+      )}
+      {shared && <p className="muted small">Using the AI provider's Base URL and key above.</p>}
+      <label>Model<input value={s.ttsModel} onChange={(e) => setSettings({ ttsModel: e.target.value })} /></label>
+      <div className="two">
+        <label>Goo's voice<input list="tts-voices" value={s.ttsVoiceA} onChange={(e) => setSettings({ ttsVoiceA: e.target.value })} /></label>
+        <label>Turbo's voice<input list="tts-voices" value={s.ttsVoiceB} onChange={(e) => setSettings({ ttsVoiceB: e.target.value })} /></label>
+      </div>
+      <datalist id="tts-voices">{voices.map((v) => <option key={v} value={v} />)}</datalist>
+      {/chatterbox/i.test(s.ttsModel) && (
+        <div className="callout">
+          <div className="small">
+            <b>Running Chatterbox-Turbo locally</b>
+            <ol className="steps">
+              <li>Install <a href="https://github.com/devnen/Chatterbox-TTS-Server" target="_blank" rel="noreferrer">Chatterbox-TTS-Server</a> and run <code>start.bat</code> (Windows) or <code>./start.sh</code>. The first run downloads the model, a few GB.</li>
+              <li>Open its web UI at <code>http://localhost:8004</code> and pick <b>Chatterbox‑Turbo</b> in the engine dropdown.</li>
+              <li>Click <b>Load voices</b> below, choose one per host, then <b>Test voice</b>.</li>
+            </ol>
+            Scripts written while Chatterbox is selected include sound tags like [laugh] and [chuckle], which Turbo performs. A GPU is strongly recommended; on CPU each line can take several seconds.
+          </div>
+        </div>
+      )}
+      <div className="row">
+        <button className="primary" onClick={tts.run} disabled={tts.busy || !hasTTS(s)}>{tts.busy ? "Rendering…" : "Test voice"}</button>
+        {!shared && <button onClick={loadVoices} disabled={loading}>{loading ? "Loading…" : "Load voices"}</button>}
+        <span className="small muted">{hasTTS(s) ? "Ready" : "Not set up"}</span>
+      </div>
+      <ResultBox r={tts.result} />
+    </section>
+  );
+}
+
+/** Timing for the last AI requests this session: shows whether time goes to waiting, thinking or writing. */
+function RecentRequests() {
+  const stats = useSyncExternalStore(subscribeStats, getStats);
+  const lastMin = stats.filter((r) => Date.now() - r.at < 60_000).length;
+  return (
+    <section className="panel">
+      <h2><Activity size={17} /> Recent requests <span className="tally">{lastMin} in the last minute</span></h2>
+      {stats.length === 0 ? (
+        <p className="muted small">Nothing yet this session. Generate something and the timings show up here (and in the developer console).</p>
+      ) : (
+        <div className="table-wrap">
+          <table className="stats-table">
+            <thead>
+              <tr><th>When</th><th>Model</th><th>First word</th><th>Total</th><th>Thinking</th><th>Answer</th><th>Speed</th></tr>
+            </thead>
+            <tbody>
+              {stats.slice(0, 12).map((r, i) => {
+                const writeS = (r.totalMs - (r.firstTokenMs ?? 0)) / 1000;
+                const answerTok = r.outTokens !== undefined ? r.outTokens - (r.reasoningTokens ?? 0) : undefined;
+                const tps = answerTok && r.firstTokenMs !== undefined && writeS > 0 ? Math.round(answerTok / writeS) : undefined;
+                return (
+                  <tr key={i}>
+                    <td>{new Date(r.at).toLocaleTimeString()}</td>
+                    <td className="mono">{r.model.split("/").pop()}</td>
+                    <td>{r.firstTokenMs !== undefined ? `${(r.firstTokenMs / 1000).toFixed(1)} s` : "–"}</td>
+                    <td>{(r.totalMs / 1000).toFixed(1)} s</td>
+                    <td>{r.reasoningTokens !== undefined ? `${r.reasoningTokens} tok` : r.reasoningChars ? `${r.reasoningChars} ch` : "–"}</td>
+                    <td>{answerTok !== undefined ? `${answerTok} tok` : `${r.outChars} ch`}</td>
+                    <td>{tps ? `${tps} tok/s` : "–"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="muted small">“First word” is the wait before visible text: queueing on the provider plus hidden thinking. “Speed” is answer tokens per second after that.</p>
+    </section>
   );
 }

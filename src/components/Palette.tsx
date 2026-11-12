@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CornerDownLeft, FileText, Layers, Moon, Search, Settings, Waves, Compass } from "lucide-react";
+import { CornerDownLeft, FileText, Layers, MessagesSquare, Moon, Search, Settings, Waves, Compass } from "lucide-react";
 import { go } from "../lib/nav";
 import { setSettings, useStore } from "../lib/store";
 import { dueCount } from "../lib/srs";
@@ -20,10 +20,18 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
     }
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [open, onClose]);
+
   const due = docs.reduce((a, d) => a + dueCount(d.cards), 0);
   const items: Item[] = useMemo(() => {
     const actions: Item[] = [
       { id: "a-lib", label: "Go to Library", icon: <Layers size={16} />, run: () => go("/") },
+      { id: "a-chat", label: "New chat", icon: <MessagesSquare size={16} />, run: () => go("/chat") },
       { id: "a-review", label: `Review due cards (${due})`, icon: <Layers size={16} />, run: () => go("/review") },
       { id: "a-learn", label: "Learn Mode", icon: <Compass size={16} />, run: () => go("/learn") },
       { id: "a-stream", label: "Study Stream", icon: <Waves size={16} />, run: () => go("/stream") },

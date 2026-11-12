@@ -20,7 +20,8 @@ const DIST = path.join(app.getAppPath(), "dist");
 
 protocol.registerSchemesAsPrivileged([{ scheme: SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } }]);
 
-if (!app.requestSingleInstanceLock()) app.quit();
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) app.quit(); // quit() is async: the whenReady handler below must not also open a second window
 
 let win: BrowserWindow | null = null;
 
@@ -38,8 +39,16 @@ const CSP = [
   "form-action 'none'",
 ].join("; ");
 
+/** Exact origin match: a prefix test would accept http://localhost:5173.evil.com or turbogoo://app-evil. */
 function isOurPage(url: string | undefined) {
-  return !!url && (url.startsWith(ORIGIN) || (!!DEV_URL && url.startsWith(DEV_URL)));
+  if (!url) return false;
+  try {
+    const u = new URL(url);
+    if (u.protocol === `${SCHEME}:`) return u.host === "app";
+    return !!DEV_URL && u.origin === new URL(DEV_URL).origin;
+  } catch {
+    return false;
+  }
 }
 
 async function serve(req: Request): Promise<Response> {
@@ -55,7 +64,12 @@ async function serve(req: Request): Promise<Response> {
     }
   }
 
-  let rel = decodeURIComponent(url.pathname);
+  let rel: string;
+  try {
+    rel = decodeURIComponent(url.pathname);
+  } catch {
+    return new Response("Bad request", { status: 400 }); // malformed %-escape
+  }
   if (rel === "/" || rel === "") rel = "/index.html";
   const full = path.normalize(path.join(DIST, rel));
   if (full !== DIST && !full.startsWith(DIST + path.sep)) return new Response("Forbidden", { status: 403 }); // path traversal guard
@@ -108,7 +122,7 @@ function hardenSession() {
     for (const [k, v] of Object.entries(details.responseHeaders ?? {})) if (!k.toLowerCase().startsWith("access-control-")) headers[k] = v;
     headers["Access-Control-Allow-Origin"] = [DEV_URL ? new URL(DEV_URL).origin : ORIGIN];
     headers["Access-Control-Allow-Headers"] = ["Authorization, Content-Type, Accept, X-Requested-With, OpenAI-Organization, X-Api-Key"];
-    headers["Access-Control-Allow-Methods"] = ["GET, POST, OPTIONS"];
+    headers["Access-Control-Allow-Methods"] = ["GET, POST, PUT, PATCH, DELETE, OPTIONS"];
     headers["Vary"] = ["Origin"];
     cb({ responseHeaders: headers, ...(details.method === "OPTIONS" ? { statusLine: "HTTP/1.1 204 No Content" } : {}) });
   });
@@ -159,6 +173,7 @@ app.on("second-instance", () => {
 });
 
 app.whenReady().then(() => {
+  if (!gotLock) return;
   setFetch(((input: any, init: any) => net.fetch(input, init)) as typeof fetch);
   protocol.handle(SCHEME, serve);
   hardenSession();
