@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CalendarDays, Check, Clock, Download, Eraser, Loader2, Moon, Plus, RotateCcw, Sparkles, Square, Trash2 } from "lucide-react";
 import { Mascot } from "../components/Mascot";
-import { PlanLogPanel } from "../components/PlanLogPanel";
 import { confirmDialog, toast } from "../components/feedback";
 import { hasLLM } from "../lib/llm";
 import { DAY_NAMES, SAVE_KEY, addDays, crossesMidnight, defaultForm, describeForm, formProblem, fromMin, isoDay, loadSaved, makePlan, nowStamp, save, shortDate, slotsFor, toMin } from "../lib/schedule";
@@ -40,15 +39,16 @@ function durationIn(name: string): number | undefined {
   return n >= 15 && n <= 360 ? n : undefined;
 }
 
-/** Study planner: a short form, an AI-built day-by-day plan, and a one-click PDF. */
+/** Study planner: the form's inputs go to the AI, which returns the plan. One step back is always available. */
 export function Schedule() {
   const { settings, docs } = useStore();
   const saved = useMemo(() => loadSaved(), []);
   const [form, setForm] = useState<PlanForm>(() => saved?.form ?? defaultForm());
   const [plan, setPlan] = useState<Plan | null>(saved?.plan ?? null);
   const [busy, setBusy] = useState(false);
-  const [step, setStep] = useState("");
   const [pdfBusy, setPdfBusy] = useState(false);
+  /** what the last change replaced: the form and plan as they were before it */
+  const [undo, setUndo] = useState<{ form: PlanForm; plan: Plan | null; what: string } | null>(null);
   const ctl = useRef<AbortController | null>(null);
   const [, tick] = useState(0);
 
@@ -76,7 +76,8 @@ export function Schedule() {
 
   async function clearAll() {
     if (busy) ctl.current?.abort();
-    if (dirty && !(await confirmDialog("Clear the planner?", "This removes your inputs and the plan on screen. A PDF you already saved is not affected.", "Clear", true))) return;
+    if (dirty && !(await confirmDialog("Clear the planner?", "This removes your inputs and the plan on screen. You can undo this once.", "Clear", true))) return;
+    setUndo({ form, plan, what: "clear" });
     try {
       localStorage.removeItem(SAVE_KEY);
     } catch {
@@ -84,28 +85,32 @@ export function Schedule() {
     }
     setForm(defaultForm());
     setPlan(null);
-    toast("Planner cleared", "ok");
+    toast("Planner cleared. Undo brings it back.", "ok");
   }
 
   async function generate() {
     if (busy || problem) return;
     setBusy(true);
-    setStep("");
     const c = new AbortController();
     ctl.current = c;
     try {
-      const p = await makePlan(settings, { ...form, start: startDay }, { signal: c.signal, onStep: setStep });
-      // busy times found in the notes join the form, so the student can see and edit them
-      const added = p.addedBusy ?? [];
-      if (added.length) setForm((f) => ({ ...f, busy: [...f.busy, ...added] }));
+      const p = await makePlan(settings, { ...form, start: startDay }, { signal: c.signal });
+      setUndo({ form, plan, what: "new plan" });
       setPlan(p);
     } catch (e) {
       if (!c.signal.aborted) toast((e as Error).message, "error");
     } finally {
       setBusy(false);
-      setStep("");
       ctl.current = null;
     }
+  }
+
+  function undoLast() {
+    if (!undo) return;
+    setForm(undo.form);
+    setPlan(undo.plan);
+    setUndo(null);
+    toast("Undone", "ok");
   }
 
   async function download() {
@@ -127,7 +132,7 @@ export function Schedule() {
         <Mascot size={84} mood="reading" />
         <div>
           <h1>Study planner</h1>
-          <p className="muted">Say what you need to study and when. TurboGoo builds a day-by-day plan around your time, then turns it into a clean PDF.</p>
+          <p className="muted">Say what you need to study and when. The AI builds a day-by-day plan from what you enter, then it turns into a clean PDF.</p>
         </div>
       </header>
 
@@ -135,7 +140,12 @@ export function Schedule() {
         <form className="sc-form" onSubmit={(e) => (e.preventDefault(), void generate())} aria-label="Plan details">
           <div className="sc-form-head">
             <h2>Your details</h2>
-            <button type="button" className="sc-clear" onClick={() => void clearAll()} disabled={!dirty && !busy}><Eraser size={15} aria-hidden /> Clear</button>
+            <div className="sc-form-btns">
+              {undo && (
+                <button type="button" className="sc-clear" onClick={undoLast} title={`Undo the last ${undo.what}`}><RotateCcw size={15} aria-hidden /> Undo</button>
+              )}
+              <button type="button" className="sc-clear" onClick={() => void clearAll()} disabled={!dirty && !busy}><Eraser size={15} aria-hidden /> Clear</button>
+            </div>
           </div>
           <section>
             <label className="sc-label" htmlFor="sc-goal">Goal <span className="sc-opt">optional</span></label>
@@ -229,7 +239,7 @@ export function Schedule() {
               <input id="sc-to" type="time" value={form.to} onChange={(e) => e.target.value && set({ to: e.target.value })} />
             </div>
             <p className={"sc-timehint" + (crossesMidnight(form) ? " night" : "")} id="sc-timehint">
-              {crossesMidnight(form) ? <><Moon size={13} aria-hidden /> Sessions can run past midnight, until {form.to} the next morning.</> : <>Nothing is scheduled outside {form.from}–{form.to}. For a late night, set an end time after midnight (like 02:00).</>}
+              {crossesMidnight(form) ? <><Moon size={13} aria-hidden /> Sessions can run past midnight, until {form.to} the next morning.</> : <>Study is planned between {form.from} and {form.to}. For a late night, set an end time after midnight (like 02:00).</>}
             </p>
             <div>
               <span className="sc-label" id="sc-sess-l">Session length</span>
@@ -242,7 +252,7 @@ export function Schedule() {
           </section>
 
           <section>
-            <span className="sc-label" id="sc-busy-l">Busy times <span className="sc-opt">never scheduled over</span></span>
+            <span className="sc-label" id="sc-busy-l">Busy times <span className="sc-opt">no study during these</span></span>
             <div className="sc-busy" role="group" aria-labelledby="sc-busy-l">
               {form.busy.map((b, i) => {
                 const overnight = toMin(b.to) < toMin(b.from);
@@ -262,11 +272,10 @@ export function Schedule() {
                     <input aria-label="Busy from" type="time" value={b.from} onChange={(e) => e.target.value && setBusy_(i, { from: e.target.value })} />
                     <input aria-label="Busy until" type="time" value={b.to} onChange={(e) => e.target.value && setBusy_(i, { to: e.target.value })} />
                     <button type="button" className="icon-btn" aria-label={`Remove ${b.label || "busy block " + (i + 1)}`} onClick={() => set({ busy: form.busy.filter((_, k) => k !== i) })}><Trash2 size={16} /></button>
-                    {(b.date !== undefined || overnight || b.auto) && (
+                    {(b.date !== undefined || overnight) && (
                       <div className="sc-busy-meta">
                         {b.date !== undefined && <input type="date" aria-label={`Date for ${b.label || "busy block " + (i + 1)}`} value={b.date} onChange={(e) => e.target.value && setBusy_(i, { date: e.target.value })} />}
                         {overnight && <span className="sc-tag">overnight</span>}
-                        {b.auto && <span className="sc-tag auto">from your notes</span>}
                       </div>
                     )}
                   </div>
@@ -281,15 +290,15 @@ export function Schedule() {
           </section>
 
           <p className="sc-now" role="status">
-            <Clock size={14} aria-hidden /> It's {nowStamp(now).replace(/ \(.*$/, "")}. {problem ? problem : `${slots.length} study day${slots.length === 1 ? "" : "s"} available${slots[0]?.date === today ? `, starting today at ${fromMin(slots[0].startMin)}` : ""}.`}
+            <Clock size={14} aria-hidden /> It's {nowStamp(now).replace(/ \(.*$/, "")}. {problem ? problem : `${slots.length} study day${slots.length === 1 ? "" : "s"} in range${slots[0]?.date === today ? `, starting today at ${fromMin(slots[0].startMin)}` : ""}.`}
           </p>
 
           {busy ? (
             <button type="button" className="primary sc-go" onClick={() => ctl.current?.abort()}><Square size={14} fill="currentColor" /> Stop</button>
           ) : (
-            <button type="submit" className="primary sc-go" disabled={!!problem}><Sparkles size={16} /> {plan ? "Make a new plan" : "Build my plan"}</button>
+            <button type="submit" className="primary sc-go" disabled={!!problem || !hasLLM(settings)}><Sparkles size={16} /> {plan ? "Make a new plan" : "Build my plan"}</button>
           )}
-          {!hasLLM(settings) && <p className="sc-hint muted">No AI key yet: plans come from a simple built-in planner. Add a key in Settings for a smarter one.</p>}
+          {!hasLLM(settings) && <p className="sc-hint muted">The planner needs an AI key. Add one in Settings.</p>}
         </form>
 
         <section className="sc-out" aria-live="polite" aria-busy={busy}>
@@ -297,7 +306,7 @@ export function Schedule() {
             <div className="sc-empty">
               <Loader2 size={30} className="spin" aria-hidden />
               <h2>Planning your days…</h2>
-              <p className="muted">{step || "Fitting your topics into the time you have. This usually takes 10 to 30 seconds."}</p>
+              <p className="muted">The AI is writing the plan. This usually takes 10 to 60 seconds.</p>
             </div>
           ) : !plan ? (
             <div className="sc-empty">
@@ -306,7 +315,7 @@ export function Schedule() {
               <p className="muted">Fill in the form and press Build my plan. You can download it as a PDF to print or keep on your phone.</p>
             </div>
           ) : (
-            <PlanView plan={plan} pdfBusy={pdfBusy} onPdf={download} onAgain={generate} canAgain={!problem} />
+            <PlanView plan={plan} pdfBusy={pdfBusy} onPdf={download} onAgain={generate} canAgain={!problem && hasLLM(settings)} />
           )}
         </section>
       </div>
@@ -317,42 +326,21 @@ export function Schedule() {
 function PlanView({ plan, pdfBusy, onPdf, onAgain, canAgain }: { plan: Plan; pdfBusy: boolean; onPdf: () => void; onAgain: () => void; canAgain: boolean }) {
   const sessions = plan.days.reduce((n, d) => n + d.sessions.length, 0);
   const mins = plan.days.reduce((n, d) => n + d.sessions.reduce((a, s) => a + s.minutes, 0), 0);
-  const problems = plan.problems ?? [];
-  const warnings = plan.warnings ?? [];
-  const tries = plan.attempts;
-  const checked = !tries
-    ? ""
-    : problems.length
-      ? `Checked: ${problems.length} ${problems.length === 1 ? "problem" : "problems"} left after ${tries} ${tries === 1 ? "try" : "tries"}`
-      : `Checked: passed on try ${tries}`;
+  const hours = Math.round((mins / 60) * 10) / 10;
   return (
     <>
       <div className="sc-result-head">
         <div>
           <h2>{plan.title}</h2>
-          <p className="muted">{plan.days.length} {plan.days.length === 1 ? "day" : "days"} · {sessions} {sessions === 1 ? "session" : "sessions"} · {Math.round((mins / 60) * 10) / 10} {Math.round((mins / 60) * 10) / 10 === 1 ? "hour" : "hours"}</p>
-          {checked && <p className={"sc-checked" + (problems.length ? " bad" : "")}>{checked}</p>}
+          <p className="muted">{plan.days.length} {plan.days.length === 1 ? "day" : "days"} · {sessions} {sessions === 1 ? "session" : "sessions"} · {hours} {hours === 1 ? "hour" : "hours"}</p>
         </div>
         <div className="sc-actions">
           <button className="primary" onClick={onPdf} disabled={pdfBusy}>{pdfBusy ? <Loader2 size={15} className="spin" /> : <Download size={15} />} Download PDF</button>
-          <button onClick={onAgain} disabled={!canAgain} title="Build a different plan from the same details"><RotateCcw size={14} /> Regenerate</button>
+          <button onClick={onAgain} disabled={!canAgain} title="Ask the AI for a different plan from the same details"><RotateCcw size={14} /> Regenerate</button>
         </div>
       </div>
       {!!plan.used?.length && <ul className="sc-used" aria-label="This plan was built around">{plan.used.map((u, i) => <li key={i}>{u}</li>)}</ul>}
-      {plan.note && <p className="sc-note" role="note">{plan.note}</p>}
       {planHasUnsupportedText(plan) && <p className="sc-note" role="note">The PDF font covers Latin scripts only. Other scripts will print as “?”.</p>}
-      {!!warnings.length && (
-        <div className="sc-box" role="note">
-          <h3>Before you start</h3>
-          <ul>{warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
-        </div>
-      )}
-      {!!problems.length && (
-        <div className="sc-box bad" role="note">
-          <h3>Check these</h3>
-          <ul>{problems.map((p, i) => <li key={i}>{p}</li>)}</ul>
-        </div>
-      )}
       {plan.summary && <p className="sc-summary">{plan.summary}</p>}
       <ol className="sc-days-list">
         {plan.days.map((d) => (
@@ -364,12 +352,10 @@ function PlanView({ plan, pdfBusy, onPdf, onAgain, canAgain }: { plan: Plan; pdf
                   <span className="sc-time">
                     {s.start}–{fromMin(toMin(s.start) + s.minutes)}
                     {s.late && <sup className="sc-late" title="After midnight, still part of this study day">+1</sup>}
-                    {s.issue && <span className="sc-flag" title={s.issue} aria-hidden>!</span>}
                   </span>
                   <div>
                     <b>{s.topic}</b>
                     <p>{s.task}</p>
-                    {s.issue && <p className="sc-issue">{s.issue}</p>}
                   </div>
                   <span className={"sc-kind " + s.kind}>{KIND_LABEL[s.kind]}</span>
                 </li>
@@ -384,7 +370,6 @@ function PlanView({ plan, pdfBusy, onPdf, onAgain, canAgain }: { plan: Plan; pdf
           <ul>{plan.tips.map((t, i) => <li key={i}>{t}</li>)}</ul>
         </div>
       )}
-      {plan.logId && <PlanLogPanel logId={plan.logId} />}
     </>
   );
 }
