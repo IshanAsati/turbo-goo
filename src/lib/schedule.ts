@@ -149,7 +149,7 @@ export function offlinePlan(f: PlanForm, now = new Date()): Plan {
   const total = days.reduce((a, d) => a + d.sessions.length, 0);
   return {
     title: f.goal.trim() || `${topics[0].name.trim()}${topics.length > 1 ? ` + ${topics.length - 1} more` : ""} study plan`,
-    summary: `${total} sessions across ${days.length} study days, from ${shortDate(days[0]?.date ?? f.start)} to ${shortDate(days[days.length - 1]?.date ?? f.end)}. Weaker topics come up more often, and the last days are for revision and a mock test.`,
+    summary: days.length > 1 ? `${total} sessions across ${days.length} study days, from ${shortDate(days[0]?.date ?? f.start)} to ${shortDate(days[days.length - 1]?.date ?? f.end)}. Weaker topics come up more often, and the last days are for revision and a mock test.` : `${total} ${total === 1 ? "session" : "sessions"} today, weaker topics first.`,
     days,
     tips: ["Study the hardest topic first, while your head is fresh.", "After each session, close the book and write down three things you remember.", "Sleep before an exam beats an extra late-night hour."],
     createdAt: Date.now(),
@@ -165,13 +165,14 @@ function promptFor(s: Settings, f: PlanForm, slots: Slot[], now: Date) {
 
 HARD RULES
 - Use ONLY the dates in "Available days". Never invent other dates. A day's first session may not start before its "from" time, and the sessions plus the short breaks between them must fit its "minutes" budget.
-- Session "minutes": a multiple of 5, between 20 and 90, near the preferred ${f.session} minutes. Leave 5-10 minutes between sessions, so each start time is the previous start plus its minutes plus the break. Times are 24-hour HH:MM.
+- Session "minutes": a multiple of 5, between 20 and 90, near the preferred ${f.session} minutes. Only a "test" session may be longer (up to 180).
+- Every session must be real study of a listed topic. NEVER add breaks, meals, rest, sleep, travel, or the student's own commitments (tuition, school, classes) as sessions: leave a gap in the times instead, and never overlap a commitment the student mentions. Leave 5-10 minutes between sessions, so each start time is the previous start plus its minutes plus the break. Times are 24-hour HH:MM.
 - Every topic gets a first "learn" session early. Then "practice" sessions. Weak topics get more sessions and come earlier; strong topics fewer.
 - The last 20-25% of the days are mainly "revise" sessions that mix topics. The final available day includes one "test" session (a timed mock paper or full self-test) and nothing heavy.
 - Mix different topics within a day so the student doesn't tire; avoid the same topic back-to-back unless it is large.
 - "task": one concrete instruction in at most 18 words, e.g. "Solve 10 questions on the quadratic formula, then redo the ones you missed". Name a chapter or exercise only if you are sure it exists. Never write vague tasks like "study chapter".
 - Be realistic about workload. Do not exceed the budget of any day, and do not cover topics the student did not list.${cbse ? "\n- The student is preparing for CBSE Class 10 (NCERT). Use NCERT chapter names and board-exam style practice." : ""}
-- "tips": 3-5 short, specific tips for THIS plan, not generic advice.
+- "tips": 3-5 short, specific tips for THIS plan. "summary" and "tips" must NOT state clock times, dates, durations or counts (the schedule already shows them and they can drift): talk about order, focus and technique instead.
 
 Schema: {"title":string (max 8 words),"summary":string (2 sentences),"tips":[string],"days":[{"date":"YYYY-MM-DD","sessions":[{"start":"HH:MM","minutes":number,"topic":string,"task":string,"kind":"learn"|"practice"|"revise"|"test"}]}]}`;
   const today = isoDay(now);
@@ -184,8 +185,23 @@ Daily window: opens at ${f.from}, ${f.hours} hour${f.hours === 1 ? "" : "s"} lon
 Student's notes: ${f.notes.trim() || "(none)"}
 
 Available days (${slots.length}):
-${slots.map((x) => `${x.date} ${shortDate(x.date).split(",")[0]} - from ${fromMin(x.startMin)}, ${x.budget} minutes${x.date === today ? " (today: only what is left of the day)" : ""}`).join("\n")}`;
+${slots.map((x) => `${x.date} (${parseDay(x.date).toLocaleDateString("en-GB", { weekday: "short" })}) - from ${fromMin(x.startMin)}, ${x.budget} minutes${x.date === today ? " (today: only what is left of the day)" : ""}`).join("\n")}`;
   return { system, user };
+}
+
+/** Breaks, meals and the student's own commitments are gaps in the day, not study sessions. */
+const NOT_STUDY = /^(a |the )?(short |quick |lunch |dinner |tea |coffee |snack |evening |morning )*(break|rest|snack|lunch|dinner|breakfast|meal|nap|sleep|free time|buffer)\b|\b(tuition|commute|travel time)\b/i;
+/** Clock times, durations and counts: facts the schedule already shows, which free text must not repeat. */
+const HARD_FACTS = /\b\d{1,2}:\d{2}\b|\b\d{1,2}\s?(?:am|pm)\b|\b\d+(?:\.\d+)?\s*[- ]?(?:hours?|hrs?|h|minutes?|mins?)\b|\b\d+\s+(?:\w+\s+){0,2}(?:questions?|sessions?|days?|papers?|problems?|topics?)\b/i;
+
+/** A factual one-line summary computed from the final schedule, so it can never disagree with it. */
+function factsLine(plan: Plan): string {
+  const sessions = plan.days.reduce((n, d) => n + d.sessions.length, 0);
+  const minutes = plan.days.reduce((n, d) => n + d.sessions.reduce((a, s) => a + s.minutes, 0), 0);
+  const hours = Math.round((minutes / 60) * 10) / 10;
+  const topics = [...new Set(plan.days.flatMap((d) => d.sessions.map((s) => s.topic)))];
+  const list = topics.length > 1 ? `${topics.slice(0, 4).join(", ").replace(/, ([^,]*)$/, topics.length <= 4 ? " and $1" : ", $1")}${topics.length > 4 ? ` and ${topics.length - 4} more` : ""}` : topics[0] ?? "";
+  return `${sessions} ${sessions === 1 ? "session" : "sessions"} over ${plan.days.length} study ${plan.days.length === 1 ? "day" : "days"}, ${hours} ${hours === 1 ? "hour" : "hours"} in total. Covers ${list}.`;
 }
 
 /** Pulls whatever the model sent into a valid plan: real dates only, valid times, no overlaps, no day over budget. */
@@ -205,7 +221,8 @@ export function repairPlan(raw: unknown, f: PlanForm, now = new Date()): Plan | 
       .map((x) => ({ x, s: toMin(String(x.start ?? "")) }))
       .sort((a, b) => (Number.isFinite(a.s) && Number.isFinite(b.s) ? a.s - b.s : 0));
     for (const { x, s } of list) {
-      const minutes = Math.min(120, Math.max(15, Math.round(Number(x.minutes) / 5) * 5 || f.session));
+      if (NOT_STUDY.test(String(x.topic).trim())) continue; // breaks, meals and the student's own commitments are gaps, not sessions
+      const minutes = Math.min(x.kind === "test" ? 180 : 120, Math.max(15, Math.round(Number(x.minutes) / 5) * 5 || f.session));
       const start = Math.max(at, Number.isFinite(s) ? s : at);
       if (start + minutes > end + 5) continue; // does not fit in the day
       const kind = KINDS.includes(x.kind as PlanKind) ? (x.kind as PlanKind) : "practice";
@@ -217,13 +234,17 @@ export function repairPlan(raw: unknown, f: PlanForm, now = new Date()): Plan | 
   const days = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
   if (!days.length) return null;
   const topics = f.topics.filter((t) => t.name.trim());
-  return {
+  const plan: Plan = {
     title: (typeof r.title === "string" && r.title.trim().slice(0, 70)) || f.goal.trim() || `${topics[0].name.trim()} study plan`,
-    summary: typeof r.summary === "string" ? r.summary.trim().slice(0, 500) : "",
-    tips: Array.isArray(r.tips) ? r.tips.filter((t): t is string => typeof t === "string" && !!t.trim()).map((t) => t.trim().slice(0, 200)).slice(0, 6) : [],
+    summary: "",
+    tips: Array.isArray(r.tips) ? r.tips.filter((t): t is string => typeof t === "string" && !!t.trim() && !HARD_FACTS.test(t)).map((t) => t.trim().slice(0, 200)).slice(0, 6) : [],
     days,
     createdAt: Date.now(),
   };
+  // The model writes the summary before the times are repaired, so keep only sentences with no facts that could now be wrong
+  const narrative = typeof r.summary === "string" ? (r.summary.match(/[^.!?]+[.!?]*/g) ?? []).map((x) => x.trim()).filter((x) => x && !HARD_FACTS.test(x)).join(" ") : "";
+  plan.summary = (factsLine(plan) + " " + narrative).trim().slice(0, 500);
+  return plan;
 }
 
 /** Builds the plan with the AI; falls back to the offline plan (and says so) when there is no key or the model fails. */

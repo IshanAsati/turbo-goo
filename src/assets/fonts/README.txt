@@ -1,0 +1,1 @@
+Plus Jakarta Sans (Regular, SemiBold, ExtraBold), (c) The Plus Jakarta Sans Project Authors (https://github.com/tokotype/PlusJakartaSans). Licensed under the SIL Open Font License 1.1: https://openfontlicense.org. Embedded in the study-plan PDF.

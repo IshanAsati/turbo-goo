@@ -224,7 +224,7 @@ function PlanView({ plan, pdfBusy, onPdf, onAgain, canAgain }: { plan: Plan; pdf
         </div>
       </div>
       {plan.note && <p className="sc-note" role="note">{plan.note}</p>}
-      {planHasUnsupportedText(plan) && <p className="sc-note" role="note">The PDF can only show Latin letters and numbers. Other scripts will print as “?”.</p>}
+      {planHasUnsupportedText(plan) && <p className="sc-note" role="note">The PDF font covers Latin scripts only. Other scripts will print as “?”.</p>}
       {plan.summary && <p className="sc-summary">{plan.summary}</p>}
       <ol className="sc-days-list">
         {plan.days.map((d) => (
