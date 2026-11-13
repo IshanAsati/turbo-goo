@@ -52,7 +52,7 @@ const weekStart = (iso: string) => {
 };
 
 export function planHasUnsupportedText(plan: Plan) {
-  return hasUnsupported([plan.title, plan.summary, ...plan.tips, ...plan.days.flatMap((d) => d.sessions.flatMap((s) => [s.topic, s.task]))].join(" "));
+  return hasUnsupported([plan.title, plan.summary, ...plan.tips, ...(plan.problems ?? []), ...(plan.warnings ?? []), ...plan.days.flatMap((d) => d.sessions.flatMap((s) => [s.topic, s.task]))].join(" "));
 }
 
 export async function buildPlanPdf(plan: Plan, now = new Date()): Promise<Uint8Array> {
@@ -69,11 +69,12 @@ export async function buildPlanPdf(plan: Plan, now = new Date()): Promise<Uint8A
 
   /* ---- header band ---- */
   pdf.addPage();
-  pdf.rect(0, 0, W, 158, { fill: BRAND });
-  pdf.circle(548, 40, 78, { fill: "#8e6bf0" });
-  pdf.circle(478, 112, 38, { fill: "#6f48dc" });
-  pdf.text(M, 46, "TURBOGOO  ·  STUDY PLAN", { font: "semi", size: 8.5, color: "#e1d8ff" });
   const titleLines = pdf.wrap(plan.title, "bold", 26, CW - 120).slice(0, 2);
+  const extra = (titleLines.length - 1) * 31; // a two-line title moves the band, the cards and the body down
+  pdf.rect(0, 0, W, 158 + extra, { fill: BRAND });
+  pdf.circle(548, 40, 78, { fill: "#8e6bf0" });
+  pdf.circle(478, 112 + extra, 38, { fill: "#6f48dc" });
+  pdf.text(M, 46, "TURBOGOO  ·  STUDY PLAN", { font: "semi", size: 8.5, color: "#e1d8ff" });
   titleLines.forEach((l, i) => pdf.text(M, 84 + i * 31, l, { font: "bold", size: 26, color: "#ffffff" }));
   const subY = 84 + (titleLines.length - 1) * 31 + 28;
   if (first && last) {
@@ -91,19 +92,57 @@ export async function buildPlanPdf(plan: Plan, now = new Date()): Promise<Uint8A
   const sw = (CW - 24) / 3;
   stats.forEach(([n, label], i) => {
     const x = M + i * (sw + 12);
-    pdf.rect(x, 138, sw, 58, { fill: "#ffffff", stroke: LINE, lw: 1, r: 12 });
-    pdf.text(x + 16, 169, n, { font: "bold", size: 22, color: BRAND });
-    pdf.text(x + 16, 185, label, { font: "semi", size: 7.5, color: MUTED });
+    pdf.rect(x, 138 + extra, sw, 58, { fill: "#ffffff", stroke: LINE, lw: 1, r: 12 });
+    pdf.text(x + 16, 169 + extra, n, { font: "bold", size: 22, color: BRAND });
+    pdf.text(x + 16, 185 + extra, label, { font: "semi", size: 7.5, color: MUTED });
   });
-  let y = 218;
+  let y = 218 + extra;
 
   /* ---- summary + legend ---- */
+  const continued = () => {
+    pdf.addPage();
+    pdf.text(M, 34, plan.title, { font: "semi", size: 8.5, color: MUTED });
+    pdf.line(M, 42, W - M, 42, LINE, 1);
+    y = 62;
+  };
+
+  /** A tinted box of bullet lines. When a bullet does not fit, the box ends and continues on the next page. */
+  const noteBox = (title: string, items: string[], tint: string, accent: string) => {
+    const wrapped = items.map((t) => pdf.wrap(t, "reg", 10, CW - 60));
+    const itemH = (lines: string[]) => lines.length * 13.5 + 7;
+    let i = 0;
+    while (i < wrapped.length) {
+      if (y + 48 + itemH(wrapped[i]) > bottom) continued();
+      let h = 48;
+      let j = i;
+      while (j < wrapped.length && (j === i || y + h + itemH(wrapped[j]) <= bottom)) h += itemH(wrapped[j++]);
+      pdf.rect(M, y, CW, h, { fill: tint, r: 12 });
+      pdf.text(M + 18, y + 27, title, { font: "bold", size: 12, color: accent });
+      let ty = y + 48;
+      for (let k = i; k < j; k++) {
+        pdf.circle(M + 22, ty - 3.5, 2.3, { fill: accent });
+        wrapped[k].forEach((l, n) => pdf.text(M + 34, ty + n * 13.5, l, { font: "reg", size: 10, color: BODY }));
+        ty += itemH(wrapped[k]);
+      }
+      y += h + 10;
+      i = j;
+    }
+  };
+
   if (plan.summary) {
     const lines = pdf.wrap(plan.summary, "reg", 10.5, CW - 36);
     const h = 22 + lines.length * 15;
     pdf.rect(M, y, CW, h, { fill: SOFT, r: 12 });
     lines.forEach((l, i) => pdf.text(M + 18, y + 24 + i * 15, l, { font: "reg", size: 10.5, color: BODY }));
     y += h + 14;
+  }
+  if (plan.problems?.length) {
+    noteBox("Check these", plan.problems, "#fbe5ea", "#c63a53");
+    y += 4;
+  }
+  if (plan.warnings?.length) {
+    noteBox("Before you start", plan.warnings, "#fdeedd", "#b86a1f");
+    y += 4;
   }
   let lx = M;
   (Object.keys(KIND) as PlanKind[]).forEach((k) => {
@@ -114,13 +153,6 @@ export async function buildPlanPdf(plan: Plan, now = new Date()): Promise<Uint8A
   });
   pdf.text(W - M, y + 7, "Tick the box when a session is done", { font: "reg", size: 8.5, color: MUTED, align: "right" });
   y += 28;
-
-  const continued = () => {
-    pdf.addPage();
-    pdf.text(M, 34, plan.title, { font: "semi", size: 8.5, color: MUTED });
-    pdf.line(M, 42, W - M, 42, LINE, 1);
-    y = 62;
-  };
 
   /* ---- days ---- */
   let week = "";
@@ -165,6 +197,7 @@ export async function buildPlanPdf(plan: Plan, now = new Date()): Promise<Uint8A
       const range = `${s.start}–${fromMin(toMin(s.start) + s.minutes)}`;
       pdf.text(X0 + 16, base, range, { font: "semi", size: 9, color: MUTED });
       if (s.late) pdf.text(X0 + 16 + pdf.measure(range, "semi", 9) + 2, base - 3, "+1", { font: "bold", size: 6.5, color: BRAND }); // after midnight, same study day
+      if (s.issue) pdf.text(X0 + 16 + pdf.measure(range, "semi", 9) + (s.late ? 2 + pdf.measure("+1", "bold", 6.5) : 0) + 5, base, "!", { font: "bold", size: 9, color: "#c63a53" }); // breaks a rule, see Check these
       topic.forEach((l, j) => pdf.text(topicX, base + j * 13.5, l, { font: "semi", size: 10.5, color: INK }));
       pdf.rect(XR - pillW, base - 9.5, pillW, 14, { fill: k.tint, r: 7 });
       pdf.text(XR - pillW / 2, base - 0.3, k.label, { font: "bold", size: 7, color: k.color, align: "center" });

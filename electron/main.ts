@@ -83,6 +83,8 @@ async function serve(req: Request): Promise<Response> {
   const headers = new Headers(res.headers);
   headers.set("Content-Security-Policy", CSP);
   headers.set("X-Content-Type-Options", "nosniff");
+  // Always revalidate: after a rebuild, a cached index.html would keep loading the previous build's code.
+  headers.set("Cache-Control", "no-cache");
   return new Response(res.body, { status: res.status, headers });
 }
 

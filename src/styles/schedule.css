@@ -119,3 +119,35 @@
   .sc-busy-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
   .sc-busy-row select { grid-column: 1 / -1; }
 }
+
+/* fixed length of a topic */
+.sc-len { grid-column: 1 / -1; display: grid; gap: 4px; }
+.sc-len-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.sc-len-l { font-size: 13px; font-weight: 600; color: var(--muted); }
+.sc-form .sc-len input { width: 110px; padding: 8px 12px; font-size: 14px; border-radius: 12px; }
+.sc-len-u { font-size: 13px; }
+.sc-len-hint { margin: 0; font-size: 13px; font-weight: 600; color: var(--link); }
+
+/* busy times: date, overnight and notes tags */
+.sc-busy-meta { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.sc-form .sc-busy-meta input[type="date"] { width: auto; flex: 0 1 190px; min-width: 0; padding: 8px 12px; font-size: 14px; }
+.sc-tag { padding: 2px 9px; border-radius: 999px; border: 1.5px solid var(--line); background: var(--panel2); font-size: 12px; font-weight: 600; color: var(--muted); }
+.sc-tag.auto { background: var(--brand-soft); border-color: transparent; color: var(--link); }
+
+/* checks: warnings and problems under the plan header */
+.sc-result-head .sc-checked { margin: 4px 0 0; font-size: 13px; font-weight: 600; color: var(--ok); }
+.sc-result-head .sc-checked.bad { color: var(--warn); }
+.sc-box { margin-top: 14px; padding: 12px 14px; border-radius: 14px; background: var(--panel2); border: 1.5px solid var(--line); font-size: 13.5px; line-height: 1.5; }
+.sc-box h3 { margin: 0 0 6px; font-size: 14.5px; }
+.sc-box ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.sc-box.bad { background: color-mix(in srgb, var(--bad) 12%, var(--panel)); border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
+.sc-box.bad h3 { color: var(--bad); }
+
+/* a session that breaks a rule */
+.sc-flag { display: inline-grid; place-items: center; width: 16px; height: 16px; margin-left: 6px; border-radius: 50%; background: var(--bad); color: var(--bad-ink); font: 800 11px/1 var(--f-body); vertical-align: 1px; }
+.sc-day li .sc-issue { margin: 3px 0 0; font-size: 13px; font-weight: 600; color: var(--bad); }
+
+@media (max-width: 560px) {
+  .sc-len-row { gap: 6px; }
+  .sc-form .sc-len input { width: 100px; }
+}
