@@ -154,3 +154,6 @@
 
 /* the one big box: the whole planner input */
 .sc-big { width: 100%; min-height: 380px; padding: 18px 20px; font-size: 16px; line-height: 1.6; border-radius: 18px; resize: vertical; }
+
+/* the generic form textarea rule sets min-height: 78px; this more specific rule keeps the big box big */
+.sc-form textarea.sc-big { min-height: 380px; }
