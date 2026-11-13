@@ -162,7 +162,9 @@ export async function buildPlanPdf(plan: Plan, now = new Date()): Promise<Uint8A
       const k = KIND[s.kind];
       const base = ty + 12;
       pdf.rect(X0, base - 8.5, 9, 9, { stroke: BOX, lw: 1, r: 2 });
-      pdf.text(X0 + 16, base, `${s.start}–${fromMin(toMin(s.start) + s.minutes)}`, { font: "semi", size: 9, color: MUTED });
+      const range = `${s.start}–${fromMin(toMin(s.start) + s.minutes)}`;
+      pdf.text(X0 + 16, base, range, { font: "semi", size: 9, color: MUTED });
+      if (s.late) pdf.text(X0 + 16 + pdf.measure(range, "semi", 9) + 2, base - 3, "+1", { font: "bold", size: 6.5, color: BRAND }); // after midnight, same study day
       topic.forEach((l, j) => pdf.text(topicX, base + j * 13.5, l, { font: "semi", size: 10.5, color: INK }));
       pdf.rect(XR - pillW, base - 9.5, pillW, 14, { fill: k.tint, r: 7 });
       pdf.text(XR - pillW / 2, base - 0.3, k.label, { font: "bold", size: 7, color: k.color, align: "center" });
