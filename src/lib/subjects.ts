@@ -137,11 +137,16 @@ export const SUBJECT_LIST = (Object.keys(SUBJECT_GUIDE) as Subject[]).map((id) =
 const CBSE_OVERLAY =
   "The student is preparing for the CBSE Class 10 board exam (NCERT-based). Keep everything at Class 10 level, use NCERT terminology, and prioritise what the board paper asks.";
 
+/** How chemical formulas must be written so they typeset (KaTeX + mhchem). Added to every prompt for subjects that can contain chemistry. */
+export const CHEM_RULE =
+  "CHEMISTRY NOTATION: write every chemical formula, ion and reaction with \\ce inside dollar signs, never as plain text. Examples: $\\ce{H2O}$, $\\ce{CO2}$, $\\ce{H2SO4}$, $\\ce{SO4^2-}$, $\\ce{Ca^2+}$, $\\ce{CH3COOH}$, and reactions such as $\\ce{2H2 + O2 -> 2H2O}$, $\\ce{CaCO3 ->[\\Delta] CaO + CO2 ^}$, $\\ce{Zn + H2SO4 -> ZnSO4 + H2 ^}$, $\\ce{NaCl(aq) + AgNO3(aq) -> AgCl v + NaNO3(aq)}$. Add state symbols (s), (l), (g), (aq) when they matter. Balance every equation.";
+
 /** The extra instruction block for a prompt, or "" when there is nothing to add. */
 export function guide(s: Settings, subject: Subject | undefined, kind: Kind): string {
   const cbse = (s.curriculum ?? "cbse10") === "cbse10";
   const g = SUBJECT_GUIDE[subject ?? "general"] ?? SUBJECT_GUIDE.general;
-  const parts = [cbse ? CBSE_OVERLAY : "", g.base[kind], cbse ? g.cbse[kind] : ""].filter(Boolean);
+  const chem = !subject || subject === "science" || subject === "general";
+  const parts = [cbse ? CBSE_OVERLAY : "", g.base[kind], cbse ? g.cbse[kind] : "", chem ? CHEM_RULE : ""].filter(Boolean);
   return parts.length ? `\n\nSUBJECT GUIDANCE:\n${parts.join("\n")}` : "";
 }
 

@@ -12,6 +12,7 @@ const ChatPage = lazy(() => import("./views/ChatPage").then((m) => ({ default: m
 const LearnHome = lazy(() => import("./views/Learn").then((m) => ({ default: m.LearnHome })));
 const Stream = lazy(() => import("./views/Stream").then((m) => ({ default: m.Stream })));
 const Review = lazy(() => import("./views/Review").then((m) => ({ default: m.Review })));
+const Schedule = lazy(() => import("./views/Schedule").then((m) => ({ default: m.Schedule })));
 const SettingsView = lazy(() => import("./views/SettingsView").then((m) => ({ default: m.SettingsView })));
 
 export function App() {
@@ -41,6 +42,7 @@ export function App() {
   else if (a === "learn") view = <LearnHome />;
   else if (a === "stream") view = <Stream />;
   else if (a === "review") view = <Review />;
+  else if (a === "schedule") view = <Schedule />;
   else if (a === "settings") view = <SettingsView />;
   else view = <Home />;
 

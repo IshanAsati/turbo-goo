@@ -3,6 +3,7 @@ import { ArrowRight, ArrowUp, BookOpen, Calculator, ChevronDown, Code, CirclePla
 import { go } from "../lib/nav";
 import { addThread, dayKey, deleteDoc, setMeta, uid, updateDoc, useStore } from "../lib/store";
 import { createCourseDoc, createDoc } from "../lib/generate";
+import { tidyName } from "../lib/ai";
 import { isYouTube } from "../lib/ingest";
 import { hasLLM } from "../lib/llm";
 import { attachText, combineSources, kindOf } from "../lib/sources";
@@ -26,7 +27,6 @@ const MODES: { id: Mode; label: string }[] = [
 ];
 const LONG_TEXT = 200; // typed text at least this long is treated as a source, shorter text as a topic/title
 const MASTERED = 80; // a card counts as mastered from this mastery score
-const stripExt = (n: string) => n.replace(/\.[a-z0-9]{2,5}$/i, "");
 
 export function Home() {
   const { docs, meta, settings } = useStore();
@@ -87,7 +87,7 @@ export function Home() {
     const typedTitle = isSource ? "" : text;
 
     if (mode === "chat") {
-      const t = addThread({ title: (typedTitle || atts[0]?.name || "New chat").slice(0, 60), attachments: atts });
+      const t = addThread({ title: (typedTitle || (atts[0] ? tidyName(atts[0].name) : "") || "New chat").slice(0, 60), attachments: atts, autoTitle: true });
       if (typedTitle) handOff(t.id, typedTitle);
       return go(`/chat/${t.id}`);
     }
@@ -98,9 +98,9 @@ export function Home() {
     }
     const source = combineSources(atts);
     if (source.trim().length < 40) return toast("There isn't enough text in those sources to build from yet.", "error");
-    const title = typedTitle || (atts.length === 1 ? stripExt(atts[0].name) : `${stripExt(atts[0].name)} + ${atts.length - 1} more`);
+    const title = typedTitle || (atts.length === 1 ? tidyName(atts[0].name) : `${tidyName(atts[0].name)} + ${atts.length - 1} more`);
     const sub = subject === "auto" ? undefined : subject;
-    const id = mode === "course" ? createCourseDoc({ title, source, kind: kindOf(atts), folderId, subject: sub }) : createDoc({ title, source, kind: kindOf(atts), folderId, subject: sub });
+    const id = mode === "course" ? createCourseDoc({ title, source, kind: kindOf(atts), folderId, subject: sub, autoTitle: !typedTitle }) : createDoc({ title, source, kind: kindOf(atts), folderId, subject: sub, autoTitle: !typedTitle });
     go(`/doc/${id}${mode === "course" ? "?tab=learn" : ""}`);
   }
 
@@ -239,7 +239,7 @@ export function Home() {
 
       {recording && (
         <Modal onClose={() => setRecording(false)} label="Record lecture">
-          <Recorder busy={false} onDone={(title, source, audio) => (setRecording(false), go(`/doc/${createDoc({ title, source, kind: "audio", audio, folderId })}`))} />
+          <Recorder busy={false} onDone={(title, source, audio) => (setRecording(false), go(`/doc/${createDoc({ title, source, kind: "audio", audio, folderId, autoTitle: true })}`))} />
           <button className="link" onClick={() => setRecording(false)}>Close</button>
         </Modal>
       )}

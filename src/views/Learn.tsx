@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { ArrowRight, AudioLines, Check, ChevronLeft, CornerDownLeft, Eye, Lightbulb, Lock, MessageCircle, PartyPopper, RotateCcw, SendHorizontal, Square, Star, TriangleAlert, Upload, X, Zap } from "lucide-react";
+import { ArrowRight, AudioLines, Check, ChevronLeft, CircleAlert, CircleCheck, CircleX, CornerDownLeft, Eye, Lightbulb, Loader2, Lock, MessageCircle, PartyPopper, RotateCcw, SendHorizontal, Square, Star, TriangleAlert, Upload, X, Zap } from "lucide-react";
 import { go } from "../lib/nav";
 import { cancelJob, createCourseDoc, generateCourse, rebuildCourse, retryLesson } from "../lib/generate";
-import { chat } from "../lib/ai";
+import { chat, gradePractice } from "../lib/ai";
+import type { PracticeVerdict } from "../lib/ai";
 import { ACCEPT, fetchYouTube, ingestFile, isYouTube } from "../lib/ingest";
 import { hasLLM } from "../lib/llm";
 import { buildPages, pageText } from "../lib/lessonPages";
@@ -162,7 +163,7 @@ function writeLesson(docId: string, i: number | null) {
 
 /** What the student has done in a lesson this session. XP is derived from it, so it can never drift. */
 type Rate = "got" | "review";
-type PageUi = { hint?: boolean; sol?: boolean; text?: string; pick?: number };
+type PageUi = { hint?: boolean; sol?: boolean; text?: string; pick?: number; result?: PracticeVerdict & { for: string }; tries?: number };
 type LState = { page: number; cont: number[]; rated: Record<number, Rate>; ui: Record<number, PageUi> };
 type DState = Record<string, LState>;
 const blank = (): LState => ({ page: 0, cont: [], rated: {}, ui: {} });
@@ -618,7 +619,7 @@ function LessonPlayer({ doc, sec, index, total, msgs, setMsgs, onClose, onFinish
   const p = pages[page];
   const ui = ls.ui[page] ?? {};
   const setUi = (u: Partial<PageUi>) => patch((l) => ({ ...l, ui: { ...l.ui, [page]: { ...l.ui[page], ...u } } }));
-  const rate = (r: Rate) => patch((l) => ({ ...l, rated: { ...l.rated, [page]: l.rated[page] ?? r } }));
+  const rate = (r: Rate, force = false) => patch((l) => ({ ...l, rated: { ...l.rated, [page]: force ? r : l.rated[page] ?? r } }));
   const lessonText = [sec.lesson, sec.example, ...(sec.practice ?? []).map((q) => `${q.q}\n${q.answer}`), ...(sec.recap ?? [])].filter(Boolean).join("\n\n");
 
   return (
@@ -639,7 +640,7 @@ function LessonPlayer({ doc, sec, index, total, msgs, setMsgs, onClose, onFinish
           </header>
 
           <section className={"lp-page " + dir} key={page} aria-live="polite" aria-label={`Page ${page + 1} of ${pages.length}`}>
-            <PageBody p={p} sec={sec} ui={ui} setUi={setUi} rated={ls.rated[page]} rate={rate} />
+            <PageBody p={p} sec={sec} subject={doc.subject} ui={ui} setUi={setUi} rated={ls.rated[page]} rate={rate} />
           </section>
 
           <footer className="lp-foot">
@@ -661,7 +662,7 @@ function LessonPlayer({ doc, sec, index, total, msgs, setMsgs, onClose, onFinish
   );
 }
 
-function PageBody({ p, sec, ui, setUi, rated, rate }: { p: LessonPage; sec: Section; ui: PageUi; setUi: (u: Partial<PageUi>) => void; rated?: Rate; rate: (r: Rate) => void }): ReactNode {
+function PageBody({ p, sec, subject, ui, setUi, rated, rate }: { p: LessonPage; sec: Section; subject: Doc["subject"]; ui: PageUi; setUi: (u: Partial<PageUi>) => void; rated?: Rate; rate: (r: Rate, force?: boolean) => void }): ReactNode {
   switch (p.kind) {
     case "intro":
       return (
@@ -685,42 +686,8 @@ function PageBody({ p, sec, ui, setUi, rated, rate }: { p: LessonPage; sec: Sect
           <Markdown text={p.md} className="lp-md" />
         </>
       );
-    case "practice": {
-      const q = p.q;
-      return (
-        <>
-          <p className="lp-eyebrow">Practice{p.of > 1 ? ` · ${p.i + 1} of ${p.of}` : ""}</p>
-          <Markdown text={q.q} className="lp-md lp-q" />
-          <textarea
-            className="lp-answer"
-            rows={3}
-            aria-label="Your answer (optional)"
-            placeholder="Type your answer, or just think it through…"
-            value={ui.text ?? ""}
-            onChange={(e) => setUi({ text: e.target.value })}
-          />
-          <div className="lp-actions">
-            {q.hint && !ui.sol && (
-              <button aria-expanded={!!ui.hint} onClick={(e) => (mouseBlur(e), setUi({ hint: !ui.hint }))}><Lightbulb size={15} /> {ui.hint ? "Hide hint" : "Show hint"}</button>
-            )}
-            <button aria-expanded={!!ui.sol} onClick={(e) => (mouseBlur(e), setUi({ sol: !ui.sol }))}><Eye size={15} /> {ui.sol ? "Hide solution" : "Show solution"}</button>
-          </div>
-          {ui.hint && q.hint && !ui.sol && (
-            <div className="lp-box tip"><b>Hint</b><Markdown text={q.hint} className="lp-md" /></div>
-          )}
-          {ui.sol && (
-            <>
-              <div className="lp-box sol"><b>Solution</b><Markdown text={q.answer} className="lp-md" /></div>
-              <div className="lp-rate" role="group" aria-label="How did you do?">
-                <span>How did you do?</span>
-                <button className={rated === "got" ? "on good" : "good"} aria-pressed={rated === "got"} onClick={(e) => (mouseBlur(e), rate("got"))} disabled={!!rated && rated !== "got"}><Check size={15} /> I got it <small>+5 XP</small></button>
-                <button className={rated === "review" ? "on" : ""} aria-pressed={rated === "review"} onClick={(e) => (mouseBlur(e), rate("review"))} disabled={!!rated && rated !== "review"}><RotateCcw size={14} /> Need review <small>+2 XP</small></button>
-              </div>
-            </>
-          )}
-        </>
-      );
-    }
+    case "practice":
+      return <Practice p={p} subject={subject} ui={ui} setUi={setUi} rated={rated} rate={rate} />;
     case "check": {
       const c = p.check;
       const answered = ui.pick !== undefined;
@@ -758,6 +725,106 @@ function PageBody({ p, sec, ui, setUi, rated, rate }: { p: LessonPage; sec: Sect
   }
 }
 
+const VERDICT = {
+  correct: { title: "Correct!", icon: CircleCheck },
+  partial: { title: "Almost there", icon: CircleAlert },
+  wrong: { title: "Not quite", icon: CircleX },
+} as const;
+
+/** A practice problem: type an answer, get it checked, then use the hint or the full solution. */
+function Practice({ p, subject, ui, setUi, rated, rate }: { p: Extract<LessonPage, { kind: "practice" }>; subject: Doc["subject"]; ui: PageUi; setUi: (u: Partial<PageUi>) => void; rated?: Rate; rate: (r: Rate, force?: boolean) => void }) {
+  const { settings } = useStore();
+  const q = p.q;
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const ctl = useRef<AbortController | null>(null);
+  useEffect(() => () => ctl.current?.abort(), []);
+
+  const text = ui.text ?? "";
+  const res = ui.result && ui.result.for === text.trim() ? ui.result : undefined; // editing the answer makes the old verdict stale
+  const stale = !!ui.result && !res;
+
+  async function check() {
+    const answer = text.trim();
+    if (!answer || busy) return;
+    setErr("");
+    setBusy(true);
+    const c = new AbortController();
+    ctl.current = c;
+    try {
+      const g = await gradePractice(settings, q.q, q.answer, answer, { signal: c.signal, subject });
+      setUi({ result: { ...g, for: answer }, tries: (ui.tries ?? 0) + 1 });
+      rate(g.verdict === "correct" ? "got" : "review", g.verdict === "correct");
+    } catch (e) {
+      if (!c.signal.aborted) setErr((e as Error).message || "Couldn't check that answer. Try again.");
+    } finally {
+      setBusy(false);
+      ctl.current = null;
+    }
+  }
+
+  const V = res ? VERDICT[res.verdict] : null;
+  return (
+    <>
+      <p className="lp-eyebrow">Practice{p.of > 1 ? ` · ${p.i + 1} of ${p.of}` : ""}</p>
+      <Markdown text={q.q} className="lp-md lp-q" />
+      <textarea
+        className={"lp-answer" + (res ? " " + res.verdict : "")}
+        rows={3}
+        aria-label="Your answer"
+        placeholder="Type your answer, then press Check"
+        value={text}
+        disabled={busy}
+        onChange={(e) => setUi({ text: e.target.value })}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            void check();
+          }
+        }}
+      />
+      <div className="lp-actions">
+        {busy ? (
+          <button className="primary" onClick={() => ctl.current?.abort()}><Loader2 size={15} className="spin" /> Checking… <small>Stop</small></button>
+        ) : !res ? (
+          <button className="primary" onClick={(e) => (mouseBlur(e), void check())} disabled={!text.trim()}>
+            <Check size={15} /> {stale ? "Check again" : "Check answer"} <small>Ctrl+Enter</small>
+          </button>
+        ) : null}
+        {q.hint && !ui.sol && (
+          <button aria-expanded={!!ui.hint} onClick={(e) => (mouseBlur(e), setUi({ hint: !ui.hint }))}><Lightbulb size={15} /> {ui.hint ? "Hide hint" : "Show hint"}</button>
+        )}
+        <button aria-expanded={!!ui.sol} onClick={(e) => (mouseBlur(e), setUi({ sol: !ui.sol }))}><Eye size={15} /> {ui.sol ? "Hide solution" : "Show solution"}</button>
+      </div>
+      {err && <p className="error-text" role="alert">{err}</p>}
+      {res && V && (
+        <div className={"lp-verdict " + res.verdict} role="status">
+          <V.icon size={22} aria-hidden />
+          <div>
+            <b>{V.title}{rated === "got" && res.verdict === "correct" ? " +5 XP" : ""}</b>
+            <Markdown text={res.feedback} className="lp-md" />
+            {res.verdict !== "correct" && !ui.sol && <p className="lp-verdict-next">Edit your answer to try again, or open the hint or solution.</p>}
+          </div>
+        </div>
+      )}
+      {ui.hint && q.hint && !ui.sol && (
+        <div className="lp-box tip"><b>Hint</b><Markdown text={q.hint} className="lp-md" /></div>
+      )}
+      {ui.sol && (
+        <>
+          <div className="lp-box sol"><b>Solution</b><Markdown text={q.answer} className="lp-md" /></div>
+          {!res && (
+            <div className="lp-rate" role="group" aria-label="How did you do?">
+              <span>How did you do?</span>
+              <button className={rated === "got" ? "on good" : "good"} aria-pressed={rated === "got"} onClick={(e) => (mouseBlur(e), rate("got"))} disabled={!!rated && rated !== "got"}><Check size={15} /> I got it <small>+5 XP</small></button>
+              <button className={rated === "review" ? "on" : ""} aria-pressed={rated === "review"} onClick={(e) => (mouseBlur(e), rate("review"))} disabled={!!rated && rated !== "review"}><RotateCcw size={14} /> Need review <small>+2 XP</small></button>
+            </div>
+          )}
+        </>
+      )}
+    </>
+  );
+}
 /* ------------------------------------------------------------------ */
 /* Lesson tutor                                                         */
 /* ------------------------------------------------------------------ */

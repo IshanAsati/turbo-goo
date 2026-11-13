@@ -51,7 +51,7 @@ export type ChatMsg = { role: "user" | "assistant"; text: string; sources?: stri
 export type Attachment = { id: string; name: string; kind: DocKind | "doc"; text: string; docId?: string; url?: string };
 
 /** A standalone chat conversation (not tied to one document). */
-export type Thread = { id: string; title: string; messages: ChatMsg[]; attachments: Attachment[]; createdAt: number; updatedAt: number };
+export type Thread = { id: string; title: string; /** true while the title is a placeholder (first words of the message); the AI renames it after the first answer */ autoTitle?: boolean; messages: ChatMsg[]; attachments: Attachment[]; createdAt: number; updatedAt: number };
 
 export type DocKind = "blank" | "text" | "file" | "audio" | "youtube" | "topic" | "image";
 
@@ -60,6 +60,7 @@ export type Subject = "maths" | "science" | "sst" | "english" | "hindi" | "cs" |
 export type Doc = {
   id: string;
   title: string;
+  autoTitle?: boolean; // true while the title came from a file name, pasted text or recording; the AI renames it once the notes exist
   folderId: string | null;
   kind: DocKind;
   subject?: Subject; // picked by the user, or detected from the content on first generation

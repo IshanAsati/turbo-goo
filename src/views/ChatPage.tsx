@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowUp, BookmarkPlus, ChevronDown, MessageSquarePlus, Square, Trash2 } from "lucide-react";
 import { chatWithSources } from "../lib/ai";
 import { go } from "../lib/nav";
-import { createDoc } from "../lib/generate";
+import { createDoc, retitleThread } from "../lib/generate";
 import { combineSources, kindOf } from "../lib/sources";
 import { handOff, takeHandOff } from "../lib/handoff";
 import { addThread, deleteThread, updateThread, useStore } from "../lib/store";
@@ -89,7 +89,7 @@ function Conversation({ thread }: { thread?: Thread }) {
     const tid = idRef.current;
     if (!tid) {
       // Create the thread, then let its own page send the message.
-      const t = addThread({ title: q.slice(0, 60), attachments: api.atts });
+      const t = addThread({ title: q.slice(0, 60), attachments: api.atts, autoTitle: true });
       handOff(t.id, q);
       return go(`/chat/${t.id}`);
     }
@@ -102,6 +102,7 @@ function Conversation({ thread }: { thread?: Thread }) {
     try {
       const r = await chatWithSources(settings, api.atts, before, q, (t) => ((partial = t), setLive(t)), { signal: ctl.current.signal });
       updateThread(tid, { messages: [...before, userMsg, { role: "assistant", text: r.text, sources: r.sources }] });
+      if (!before.length) void retitleThread(tid, q, r.text);
     } catch (e) {
       if (!ctl.current.signal.aborted) toast((e as Error).message, "error");
       if (partial) updateThread(tid, { messages: [...before, userMsg, { role: "assistant", text: partial }] });
@@ -113,7 +114,7 @@ function Conversation({ thread }: { thread?: Thread }) {
   const makeStudySet = () => {
     if (!api.atts.length) return;
     const title = thread?.title ?? api.atts[0].name;
-    go(`/doc/${createDoc({ title, source: combineSources(api.atts), kind: kindOf(api.atts) })}`);
+    go(`/doc/${createDoc({ title, source: combineSources(api.atts), kind: kindOf(api.atts), autoTitle: !thread || !!thread.autoTitle })}`);
   };
 
   const starters = api.atts.length

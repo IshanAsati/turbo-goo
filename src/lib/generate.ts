@@ -1,5 +1,5 @@
-import { genCards, genLesson, genNotes, genOutline, genPodcast, genQuiz } from "./ai";
-import { addDoc, getState, saveAudio, setJob, updateDoc } from "./store";
+import { genCards, genLesson, genNotes, genOutline, genPodcast, genQuiz, genTitle } from "./ai";
+import { addDoc, getState, saveAudio, setJob, updateDoc, updateThread } from "./store";
 import { detectSubject } from "./subjects";
 import type { Doc, DocKind, Section, Subject } from "./types";
 
@@ -25,7 +25,17 @@ export function cancelJob(key: string) {
   setJob(key, null);
 }
 
-export type NewDoc = { title: string; source: string; kind: DocKind; sourceUrl?: string; folderId?: string | null; audio?: Blob; subject?: Subject };
+export type NewDoc = { title: string; source: string; kind: DocKind; sourceUrl?: string; folderId?: string | null; audio?: Blob; subject?: Subject; /** the title is a placeholder (file name, pasted text, recording): let the AI name it once there is content */ autoTitle?: boolean };
+
+/**
+ * Give an auto-titled document a real title written from its content. The user's own edits win: if the title changed
+ * while the model was working, or the document was already renamed, nothing happens.
+ */
+async function retitle(id: string, was: string, material: string, subject?: Subject) {
+  const t = await genTitle(settings(), "study", material, { subject, current: was }).catch(() => null);
+  const cur = getState().docs.find((x) => x.id === id);
+  if (t && cur?.autoTitle && cur.title === was) updateDoc(id, { title: t, autoTitle: false });
+}
 
 /** The document's subject: the user's choice, else a guess from its title and text (stored so it stays stable). */
 function subjectOf(d: Doc): Subject {
@@ -36,7 +46,7 @@ function subjectOf(d: Doc): Subject {
 }
 
 export function createDoc(o: NewDoc): string {
-  const d = addDoc({ title: o.title, source: o.source, kind: o.kind, sourceUrl: o.sourceUrl, folderId: o.folderId ?? "f-general", hasAudio: !!o.audio, subject: o.subject });
+  const d = addDoc({ title: o.title, source: o.source, kind: o.kind, sourceUrl: o.sourceUrl, folderId: o.folderId ?? "f-general", hasAudio: !!o.audio, subject: o.subject, autoTitle: o.autoTitle });
   if (o.audio) void saveAudio(d.id, o.audio);
   void generateMissing(d.id);
   return d.id;
@@ -82,6 +92,7 @@ export async function generateMissing(id: string) {
     );
     updateDoc(id, { notes: final });
     if (signal.aborted) return;
+    if (d.autoTitle) void retitle(id, d.title, final, subject);
 
     setJob(id, { step: "", done: true });
     setTimeout(() => setJob(id, null), 2500);
@@ -91,6 +102,16 @@ export async function generateMissing(id: string) {
   } finally {
     if (controllers.get(id)?.signal === signal) controllers.delete(id);
   }
+}
+
+/** Name a chat after its first exchange. Does nothing if the user renamed it, or if there is no AI to ask. */
+export async function retitleThread(id: string, question: string, answer: string) {
+  const th = getState().threads.find((x) => x.id === id);
+  if (!th?.autoTitle) return;
+  const was = th.title;
+  const t = await genTitle(settings(), "chat", `Student: ${question}\n\nTutor: ${answer}`, { current: was }).catch(() => null);
+  const cur = getState().threads.find((x) => x.id === id);
+  if (t && cur?.autoTitle && cur.title === was) updateThread(id, { title: t, autoTitle: false });
 }
 
 /** What the student chose on the generator screen. */
@@ -209,6 +230,7 @@ export async function generateCourse(d: Doc, o: { rebuild?: boolean; only?: stri
       });
       if (signal.aborted) return;
       updateDoc(d.id, { course: out.sections, courseInfo: out.info });
+      if (d.autoTitle) void retitle(d.id, d.title, `${out.info?.summary ?? ""}\n${out.sections.map((s) => s.title).join("\n")}`, subject0);
     }
     // A bare title ("Quadratic equations") is a weak signal; the outline's lesson titles and objectives make the subject clear.
     let subject = subject0;
@@ -347,7 +369,7 @@ function lessonsAsSource(d: Doc): string {
 
 /** Learn Mode: topic or source -> an outline, then lessons written one by one; notes, cards and quiz follow. */
 export function createCourseDoc(o: NewDoc): string {
-  const d = addDoc({ title: o.title, source: o.source, kind: o.kind, sourceUrl: o.sourceUrl, folderId: o.folderId ?? "f-general", subject: o.subject });
+  const d = addDoc({ title: o.title, source: o.source, kind: o.kind, sourceUrl: o.sourceUrl, folderId: o.folderId ?? "f-general", subject: o.subject, autoTitle: o.autoTitle });
   void generateCourse(d);
   return d.id;
 }

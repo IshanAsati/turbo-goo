@@ -26,6 +26,10 @@ function youtubeApi(): Plugin {
 export default defineConfig({
   plugins: [react(), youtubeApi()],
   build: { chunkSizeWarningLimit: 900 },
+  // KaTeX and its mhchem add-on (\ce{...}) must share ONE copy of KaTeX, or the macro is registered on a copy nobody renders with.
+  // rehype-katex installs its own nested copy of KaTeX; dedupe so the app, rehype-katex and mhchem all use the same one.
+  resolve: { dedupe: ["katex"] },
+  optimizeDeps: { include: ["katex", "katex/contrib/mhchem", "rehype-katex"] },
   // .tools holds local helpers like the Chatterbox TTS server (a Python runtime with many thousands of files).
   server: { watch: { ignored: ["**/.tools/**"] } },
 });

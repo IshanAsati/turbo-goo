@@ -32,12 +32,28 @@ function friendly(status: number, body: string): string {
     return "That model isn't enabled for your account (404: function not found for account). Providers like NVIDIA turn models on per account. In Settings, click “Find models that work on my account” and pick one.";
   if (status === 404) return detail ? `Not found (404): ${detail.slice(0, 200)}` : "The endpoint or model wasn't found (404). Check the Base URL and model names in Settings.";
   if (status === 429) return "Rate limit or quota reached (429). Wait a moment or check your provider's billing.";
-  if (status >= 500) return `The AI provider had a server error (${status}). Try again shortly.`;
+  if (status >= 500) return `The AI provider is overloaded or down (${status})${detail ? `: ${detail.slice(0, 160)}` : ""}. TurboGoo already retried; wait a minute and try again, or switch the model in Settings.`;
   return `AI request failed (${status}): ${body.slice(0, 200)}`;
 }
 
+/** Waits `ms`, but ends early (and rejects) when the user cancels. */
+const nap = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) return reject(new LLMError("Cancelled."));
+    const done = () => (clearTimeout(t), signal?.removeEventListener("abort", onAbort));
+    const onAbort = () => (done(), reject(new LLMError("Cancelled.")));
+    const t = setTimeout(() => (done(), resolve()), ms);
+    signal?.addEventListener("abort", onAbort);
+  });
+/** How long to wait before retry number `attempt` (0-based): the provider's Retry-After if it sent one, else 1.5 s doubling to 12 s, with jitter. */
+const backoff = (attempt: number, res?: Response) => {
+  const ra = Number(res?.headers.get("retry-after"));
+  if (Number.isFinite(ra) && ra > 0) return Math.min(ra, 20) * 1000;
+  return Math.min(1500 * 2 ** attempt, 12_000) * (0.8 + Math.random() * 0.4);
+};
+
 async function request(s: Settings, path: string, init: RequestInit, opts: { timeoutMs?: number; retries?: number; signal?: AbortSignal } = {}): Promise<Response> {
-  const { timeoutMs = 90_000, retries = 2, signal } = opts;
+  const { timeoutMs = 90_000, retries = 4, signal } = opts;
   let lastErr: unknown;
   for (let attempt = 0; attempt <= retries; attempt++) {
     const ctl = new AbortController();
@@ -50,7 +66,8 @@ async function request(s: Settings, path: string, init: RequestInit, opts: { tim
       if (res.ok) return res;
       const body = await res.text();
       if ((res.status === 429 || res.status >= 500) && attempt < retries) {
-        await new Promise((r) => setTimeout(r, 800 * 2 ** attempt));
+        clearTimeout(timer);
+        await nap(backoff(attempt, res), signal);
         continue;
       }
       throw new LLMError(friendly(res.status, body), res.status);
@@ -59,8 +76,10 @@ async function request(s: Settings, path: string, init: RequestInit, opts: { tim
       if (signal?.aborted) throw new LLMError("Cancelled.");
       lastErr = e;
       const timedOut = (e as Error).name === "AbortError";
-      if (attempt < retries) {
-        await new Promise((r) => setTimeout(r, 800 * 2 ** attempt));
+      // a request that already waited the full timeout is retried once at most; dropped connections get every retry
+      if (attempt < (timedOut ? Math.min(retries, 1) : retries)) {
+        clearTimeout(timer);
+        await nap(backoff(attempt), signal);
         continue;
       }
       throw new LLMError(
@@ -124,6 +143,17 @@ async function sendTolerant(s: Settings, body: Record<string, unknown>, opts: { 
   try {
     return await post(body);
   } catch (e) {
+    // The provider kept failing (5xx / 429) for this model: give the other configured model one try before giving up.
+    if (e instanceof LLMError && e.status !== undefined && (e.status >= 500 || e.status === 429)) {
+      const alt = body.model === s.model ? s.fastModel : s.model;
+      if (alt && alt !== body.model) {
+        try {
+          return await request(s, "/chat/completions", { method: "POST", headers: headers(s, { "Content-Type": "application/json" }), body: JSON.stringify({ ...body, model: alt }) }, { ...opts, retries: 1 });
+        } catch (e2) {
+          throw opts.signal?.aborted ? e2 : e;
+        }
+      }
+    }
     if (!(e instanceof LLMError && e.status === 400) || !OPTIONAL.some((k) => k in body)) throw e;
     const rest = { ...body };
     OPTIONAL.forEach((k) => delete rest[k]);
@@ -165,7 +195,7 @@ export async function stream(
   const body = withReasoning(s, { model: modelFor(s, tier), messages, stream: true, stream_options: { include_usage: true }, temperature: o.temperature ?? 0.4 }, !!o.noThink);
   if (o.maxTokens) body.max_tokens = o.maxTokens;
   const t0 = performance.now();
-  const res = await sendTolerant(s, body, { signal: o.signal, timeoutMs: 120_000, retries: 1 });
+  const res = await sendTolerant(s, body, { signal: o.signal, timeoutMs: 120_000, retries: 3 });
   if (!res.body) {
     const msg = (await res.json()).choices?.[0]?.message ?? {};
     const t: string = typeof msg.content === "string" ? msg.content : "";

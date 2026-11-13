@@ -1,4 +1,4 @@
-import { ChevronRight, Flame, House, Layers, MessagesSquare, Moon, Search, Settings as Cog, Sun, Waves, Zap } from "lucide-react";
+import { CalendarDays, ChevronRight, Flame, House, Layers, MessagesSquare, Moon, Search, Settings as Cog, Sun, Waves, Zap } from "lucide-react";
 import { liveStreak, setSettings, useStore } from "../lib/store";
 import { dueCount } from "../lib/srs";
 import "../styles/shell.css";
@@ -24,6 +24,10 @@ export function TopBar({ section, docId, onSearch }: { section?: string; docId?:
       <a className="tb-brand" href="#/" onClick={top} aria-label="TurboGoo home">
         <span className="tb-mark" aria-hidden><Zap size={16} fill="currentColor" strokeWidth={1.5} /></span>
         <span className="tb-name">TurboGoo</span>
+      </a>
+      <a className={"tb-pill tb-plan" + (section === "schedule" ? " on" : "")} href="#/schedule" onClick={top} aria-current={section === "schedule" ? "page" : undefined} title="Study planner: build a schedule and a PDF">
+        <CalendarDays size={16} aria-hidden />
+        <span className="tb-label">Planner</span>
       </a>
 
       {onDoc && (

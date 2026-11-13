@@ -2,7 +2,7 @@ import type { Attachment, Card, ChatMsg, CourseInfo, DocKind, PodcastLine, Pract
 import { LLMError, complete, completeJSON, hasLLM, modelFor, parseJSON, stream, ttsSupportsTags } from "./llm";
 import { newCard } from "./srs";
 import { uid } from "./store";
-import { detectSubject, guide } from "./subjects";
+import { CHEM_RULE, detectSubject, guide } from "./subjects";
 import { cap, chunk, contentWords, dedupeBy, mask, normalizeAnswer, retrieve, segments, sentences, shuffle, topKeywords, topSentences } from "./text";
 
 type Opt = { signal?: AbortSignal; subject?: Subject };
@@ -33,7 +33,8 @@ FORMAT (Markdown):
 - Start with "# Title" (only when told to), then 3-6 "## Section" headings in the source's order.
 - Under each heading: 3-7 short bullets, one idea each, at most ~20 words per bullet. No paragraphs, no sub-sub-bullets.
 - **Bold** a key term where it is defined. Use a table only when comparing 3+ things on the same attributes.
-- Math and chemistry use LaTeX ($x^2$ inline, $$...$$ for display). Give the result and the one step that matters, not every line of algebra.
+- Math uses LaTeX ($x^2$ inline, $$...$$ for display). Give the result and the one step that matters, not every line of algebra.
+- Chemistry: every formula, ion and reaction goes in \\ce inside dollar signs, never plain text: $\\ce{H2O}$, $\\ce{SO4^2-}$, $\\ce{2H2 + O2 -> 2H2O}$, $\\ce{CaCO3 ->[\\Delta] CaO + CO2 ^}$. Balance equations and add state symbols (s) (l) (g) (aq) when they matter.
 - At most one "> 💡 Example:" blockquote per section, and only when the example teaches something the bullets cannot.
 
 WHAT TO KEEP: definitions, laws and formulas, cause and effect, distinctions between easily confused things, worked-example results, anything the speaker says is important or examinable.
@@ -131,7 +132,7 @@ const CARD_RULES = `A good card:
 - tests ONE idea that a student must actually know: a definition, a law or formula, a cause and effect, a distinction between two things, or why/how something works;
 - has a front that is a specific question or prompt a student could answer from memory, and that makes sense on its own (never "this", "the above", "the passage", or "according to the notes");
 - has a back of 1-2 short sentences or a formula, under 25 words, that fully answers the front;
-- uses LaTeX ($...$) for any math.
+- uses LaTeX ($...$) for any math, and \\ce for chemistry ($\\ce{H2SO4}$, $\\ce{2H2 + O2 -> 2H2O}$), never plain-text formulas.
 
 Do NOT make cards for: the document's title, headings, structure or "key takeaways" as such; trivia, dates, names or numbers unless the notes stress them; vague prompts like "Explain X" or "Describe the topic"; anything the notes do not state; or two cards that test the same fact in different words.
 
@@ -323,6 +324,106 @@ function gradeOffline(reference: string, answer: string) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Titles                                                               */
+/* ------------------------------------------------------------------ */
+
+/** One clean line from a model reply: no quotes, markdown, "Title:" label, trailing punctuation or file extension. */
+export function cleanTitle(raw: string, max = 64): string | null {
+  let t = (raw.split("\n").map((l) => l.trim()).find(Boolean) ?? "")
+    .replace(/^(title|name|heading)\s*[:\-]\s*/i, "")
+    .replace(/^#+\s*/, "")
+    .replace(/[*_`"“”‘’]+/g, "")
+    .replace(/\.(pdf|docx?|pptx?|txt|md|mp3|mp4|wav|m4a|png|jpe?g)$/i, "")
+    .replace(/[\s.:;,\-–—]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (t.length > max) t = t.slice(0, max).replace(/\s+\S*$/, "");
+  if (t.length < 3 || /^(untitled|new chat|study notes|notes|summary)$/i.test(t)) return null;
+  return t;
+}
+
+/** "chapter_4-quadratic eqns.pdf" -> "Chapter 4 quadratic eqns": a readable name when no AI is available. */
+export function tidyName(name: string): string {
+  const t = name.replace(/\.[a-z0-9]{2,5}$/i, "").replace(/[_\s]+/g, " ").replace(/(?<=\w)-(?=\w)/g, " ").replace(/\s+/g, " ").trim();
+  return t && t === t.toLowerCase() ? t[0].toUpperCase() + t.slice(1) : t;
+}
+
+/**
+ * A short, specific title for study material or a chat, written by the fast model from the content itself.
+ * Returns null when there is no key, the model fails, or the answer isn't usable, so callers simply keep the old title.
+ */
+export async function genTitle(s: Settings, kind: "study" | "chat", material: string, o: Opt & { current?: string } = {}): Promise<string | null> {
+  if (!hasLLM(s) || material.trim().length < 20) return null;
+  const subject = o.subject && o.subject !== "general" ? ` The subject is ${o.subject}.` : "";
+  const system =
+    kind === "study"
+      ? `You name study material for a student's library. Write ONE title of 3 to 7 words (max 60 characters) that says exactly what it covers, in Title Case, e.g. "Quadratic Equations: Nature of Roots" or "Nationalism in India: Rowlatt Satyagraha".${subject} Name the real topic, not the format: no "Notes on", "Lecture", "Study Guide", "Introduction to" filler, no file extension, no dates, no quotes, no emoji. If the material covers several topics, name the common theme. Reply with the title only.`
+      : `You name a student's chat. Write ONE title of 2 to 6 words (max 50 characters) that captures what the conversation is about, e.g. "Why Ice Floats on Water" or "Solving Simultaneous Equations". No quotes, no emoji, no trailing punctuation, no "Chat about". Reply with the title only.`;
+  try {
+    const out = await complete(s, "fast", [{ role: "system", content: system }, { role: "user", content: clip(material, 3500) }], { signal: o.signal, maxTokens: 60, temperature: 0.3 }, true);
+    const t = cleanTitle(out, kind === "chat" ? 50 : 64);
+    return t && t.toLowerCase() !== (o.current ?? "").trim().toLowerCase() ? t : null;
+  } catch (e) {
+    if (o.signal?.aborted) throw e;
+    return null; // a failed rename must never get in the way of the real work
+  }
+}
+/* ------------------------------------------------------------------ */
+/* Lesson practice answers                                              */
+/* ------------------------------------------------------------------ */
+
+export type PracticeVerdict = { verdict: "correct" | "partial" | "wrong"; feedback: string; offline?: boolean };
+
+/** Every number in a text as a value ("1/2" and "0.5" are the same, "1,000" is 1000). */
+function numbersIn(t: string): number[] {
+  const out: number[] = [];
+  for (const m of t.replace(/(\d),(?=\d{3}\b)/g, "$1").matchAll(/(-?\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)|-?\d+(?:\.\d+)?/g)) {
+    const v = m[2] ? parseFloat(m[1]) / parseFloat(m[2]) : parseFloat(m[0]);
+    if (Number.isFinite(v)) out.push(v);
+  }
+  return out;
+}
+const sameNum = (a: number, b: number) => Math.abs(a - b) <= Math.max(0.011, Math.abs(b) * 0.01);
+
+/** No model available (or it failed): compare the final numbers of the worked solution, or the key words when there are none. */
+function gradePracticeOffline(solution: string, answer: string, note = ""): PracticeVerdict {
+  const lines = solution.split("\n").map((l) => l.trim()).filter(Boolean);
+  const finalLine = lines[lines.length - 1] ?? "";
+  const lastLine = numbersIn(finalLine.includes("=") ? finalLine.slice(finalLine.lastIndexOf("=") + 1) : finalLine); // "3 x 4 = 12" -> just 12
+  const want = (lastLine.length ? lastLine : numbersIn(solution).slice(-2)).slice(-4);
+  const tail = " (Checked without the AI, by comparing the final numbers, so it may miss a correct answer in different words.)";
+  if (want.length) {
+    const got = numbersIn(answer);
+    const hit = want.filter((w) => got.some((g) => sameNum(g, w))).length;
+    if (hit === want.length) return { verdict: "correct", feedback: "Your final answer matches the solution." + note, offline: true };
+    if (hit > 0) return { verdict: "partial", feedback: "Some of your numbers match, but not all of them. Re-check the last steps." + tail + note, offline: true };
+    return { verdict: "wrong", feedback: "Your final answer doesn't match. Try the hint, then check your steps." + tail + note, offline: true };
+  }
+  const g = gradeOffline(solution, answer);
+  const verdict = g.score > 0.6 ? "correct" : g.score > 0.3 ? "partial" : "wrong";
+  return { verdict, feedback: (verdict === "correct" ? "You covered the key ideas." : verdict === "partial" ? "You have part of it. Compare with the hint and add what's missing." : "That misses the key ideas. Try the hint.") + tail + note, offline: true };
+}
+
+/** Marks one lesson practice answer. The reference solution is a guide, not the only valid method. */
+export async function gradePractice(s: Settings, question: string, solution: string, answer: string, o: Opt = {}): Promise<PracticeVerdict> {
+  if (!hasLLM(s)) return gradePracticeOffline(solution, answer);
+  try {
+    const j = await json<{ verdict: string; feedback: string }>(
+      s,
+      "fast",
+      `You mark ONE practice answer from a student${o.subject ? ` studying ${o.subject}` : ""}. Decide if the student's final answer and reasoning are right. Accept equivalent forms (0.5 = 1/2), other valid methods, and different wording; ignore small spelling slips. If the reference solution looks wrong, trust correct maths or facts. verdict: "correct" = right answer (minor omissions fine); "partial" = right idea but a wrong or missing step, or only part of a multi-part answer; "wrong" = otherwise. feedback: at most 2 short sentences speaking to the student ("you"): say what is right, and for partial/wrong point to the step to re-check WITHOUT writing out the full solution or the final answer. Schema: {"verdict":"correct"|"partial"|"wrong","feedback":string}.`,
+      `Question: ${question}\n\nReference solution:\n${clip(solution, 3000)}\n\nStudent answer: ${clip(answer, 2000)}`,
+      o,
+    );
+    const v = j?.verdict?.toLowerCase();
+    if ((v === "correct" || v === "partial" || v === "wrong") && typeof j?.feedback === "string") return { verdict: v, feedback: j.feedback.trim() };
+  } catch (e) {
+    if (o.signal?.aborted) throw e;
+  }
+  return gradePracticeOffline(solution, answer, " The AI grader didn't answer.");
+}
+
+/* ------------------------------------------------------------------ */
 /* Podcast                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -424,7 +525,7 @@ const BOARD_STYLE =
 function courseGuide(s: Settings, subject: Subject): string {
   const g = COURSE_GUIDE[subject] ?? COURSE_GUIDE.general;
   const cbse = isCbse(s);
-  const parts = [g.base, cbse ? g.cbse : "", cbse ? BOARD_STYLE : ""].filter(Boolean);
+  const parts = [g.base, cbse ? g.cbse : "", cbse ? BOARD_STYLE : "", subject === "science" || subject === "general" ? CHEM_RULE : ""].filter(Boolean);
   return parts.length ? `\n\nSUBJECT RULES FOR LESSONS:\n${parts.join("\n")}` : "";
 }
 

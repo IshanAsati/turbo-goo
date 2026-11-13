@@ -172,6 +172,26 @@ app.on("second-instance", () => {
   }
 });
 
+/** Saves a PDF that the renderer built itself (the study schedule). Only PDFs, only from our own page, size-capped. */
+ipcMain.handle("save-pdf", async (event, rawName: unknown, rawBytes: unknown) => {
+  if (!isOurPage(event.senderFrame?.url)) throw new Error("Not allowed from this page.");
+  const bytes = rawBytes instanceof Uint8Array ? rawBytes : rawBytes instanceof ArrayBuffer ? new Uint8Array(rawBytes) : null;
+  if (!bytes || bytes.length < 8 || bytes.length > 50 * 1024 * 1024) throw new Error("That isn't a PDF.");
+  if (Buffer.from(bytes.subarray(0, 5)).toString("latin1") !== "%PDF-") throw new Error("That isn't a PDF.");
+  const name = (String(rawName ?? "").replace(/[\\/:*?"<>|\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim().replace(/\.pdf$/i, "").slice(0, 80) || "TurboGoo study plan") + ".pdf";
+  const testPath = !app.isPackaged ? process.env.TURBOGOO_TEST_PDF : undefined;
+  let file = testPath;
+  if (!file) {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const opts = { defaultPath: path.join(app.getPath("documents"), name), filters: [{ name: "PDF", extensions: ["pdf"] }] };
+    const pick = await (win ? dialog.showSaveDialog(win, opts) : dialog.showSaveDialog(opts));
+    if (pick.canceled || !pick.filePath) return null;
+    file = pick.filePath.toLowerCase().endsWith(".pdf") ? pick.filePath : pick.filePath + ".pdf";
+  }
+  fs.writeFileSync(file, Buffer.from(bytes));
+  if (!testPath) void shell.openPath(file);
+  return file;
+});
 /** "Save as PDF": render the page with its print stylesheet (the notes layout), ask where to save, write it, open it. */
 ipcMain.handle("export-pdf", async (event, rawTitle: unknown) => {
   if (!isOurPage(event.senderFrame?.url)) throw new Error("Not allowed from this page.");
