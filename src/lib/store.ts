@@ -12,6 +12,7 @@ export const defaultSettings: Settings = {
   apiKey: "",
   model: "nvidia/nemotron-3.5-lightning-free",
   fastModel: "nvidia/nemotron-3.5-lightning-free",
+  plannerModel: "",
   reasoning: "low",
   curriculum: "cbse10",
   sttBaseUrl: "",

@@ -1,4 +1,11 @@
 import type { Busy, PlanForm } from "./schedule";
+import type { Settings } from "./types";
+
+/** The settings the planner AI calls use: the planner model for both the plan and the notes, or the normal models when none is set. */
+export const plannerSettings = (s: Settings): Settings => {
+  const m = (s.plannerModel ?? "").trim();
+  return m ? { ...s, model: m, fastModel: m } : s;
+};
 
 /**
  * Date and time helpers for the study planner. Everything is local time. Inside a study day, times are minutes from

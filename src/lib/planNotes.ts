@@ -1,5 +1,5 @@
 import { complete, hasLLM, parseJSON } from "./llm";
-import { DAY_NAMES, busyLength, fromMin, isoDay, nowStamp, parseDay, toMin, validBusy, validDay, windowLength } from "./planTime";
+import { DAY_NAMES, busyLength, fromMin, isoDay, nowStamp, parseDay, plannerSettings, toMin, validBusy, validDay, windowLength } from "./planTime";
 import type { Busy, PlanForm } from "./schedule";
 import type { Settings } from "./types";
 
@@ -202,7 +202,7 @@ export async function readNotes(s: Settings, f: PlanForm, o: { signal?: AbortSig
   const { system, user } = promptFor(f, notes, now);
   let reply = "";
   try {
-    reply = await complete(s, "fast", [{ role: "system", content: system }, { role: "user", content: user }], { json: true, signal: o.signal, temperature: 0.1, maxTokens: 800 });
+    reply = await complete(plannerSettings(s), "fast", [{ role: "system", content: system }, { role: "user", content: user }], { json: true, signal: o.signal, temperature: 0.1, maxTokens: 800 });
     const parsed = parseJSON<unknown>(reply);
     if (!obj(parsed)) throw new Error("The reply wasn't a JSON object.");
     return { ...fromReply(parsed, f, now), sent: user, reply };

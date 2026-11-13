@@ -1,5 +1,5 @@
 import { LLMError, complete, hasLLM, parseJSON } from "./llm";
-import { addDays, busyLabel, busyOn, crossesMidnight, daysLabel, diffDays, fromMin, isoDay, nowStamp, parseDay, shortDate, toMin, validBusy, validDay, windowLength } from "./planTime";
+import { addDays, busyLabel, busyOn, crossesMidnight, daysLabel, diffDays, fromMin, isoDay, nowStamp, parseDay, plannerSettings, shortDate, toMin, validBusy, validDay, windowLength } from "./planTime";
 import type { Settings } from "./types";
 import { modelFor } from "./llm";
 import { checkPlan } from "./planCheck";
@@ -382,7 +382,7 @@ export async function makePlan(s: Settings, f: PlanForm, o: { signal?: AbortSign
     };
 
   const { system, user } = promptFor(s, planForm, slots, busyAll, notes, now);
-  const log = newLog(modelFor(s, "smart"), system, user);
+  const log = newLog(modelFor(plannerSettings(s), "smart"), system, user);
   log.notes = { sent: notes.sent ?? "", reply: notes.reply ?? "", error: notes.error };
   const attempts: PlanAttempt[] = [];
   log.attempts = attempts;
@@ -403,7 +403,7 @@ export async function makePlan(s: Settings, f: PlanForm, o: { signal?: AbortSign
     let error: string | undefined;
     let stop = false;
     try {
-      reply = await complete(s, "smart", messages, { json: true, signal: o.signal, temperature: 0.2, maxTokens });
+      reply = await complete(plannerSettings(s), "smart", messages, { json: true, signal: o.signal, temperature: 0.2, maxTokens });
       const parsed = parseJSON<unknown>(reply);
       if (parsed === null) problems = ["The reply wasn't valid JSON."];
       else {

@@ -174,6 +174,7 @@ export function SettingsView() {
             <label>Smart model <small className="muted">notes, chat, courses</small><input value={s.model} onChange={(e) => setSettings({ model: e.target.value })} /></label>
             <label>Fast model <small className="muted">cards, quizzes, grading</small><input value={s.fastModel} onChange={(e) => setSettings({ fastModel: e.target.value })} /></label>
           </div>
+          <label>Planner model <small className="muted">study planner: the plan and reading your notes. Empty = use the Smart model</small><input value={s.plannerModel ?? ""} placeholder={s.model} onChange={(e) => setSettings({ plannerModel: e.target.value })} /></label>
           <ModelFinder />
           <div className="field">
             <span className="field-label">Thinking before answering <small className="muted">for reasoning models</small></span>

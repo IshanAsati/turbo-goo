@@ -88,6 +88,7 @@ export type Settings = {
   apiKey: string;
   model: string; // "smart" tier: notes, podcast, tutoring, courses
   fastModel: string; // "fast" tier: cards, quizzes, grading, annotations
+  plannerModel: string; // study planner: plans and the notes reader; empty = use the smart model
   reasoning: "auto" | "none" | "low" | "medium" | "high"; // how long reasoning models think first; "auto" = don't send
   curriculum: "cbse10" | "general"; // adds CBSE Class 10 (NCERT) guidance to prompts
   sttBaseUrl: string; // speech-to-text provider; empty = use the AI provider above
