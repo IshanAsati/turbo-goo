@@ -3,7 +3,7 @@ import { CalendarDays, Check, Clock, Download, Eraser, Loader2, Moon, Plus, Rota
 import { Mascot } from "../components/Mascot";
 import { confirmDialog, toast } from "../components/feedback";
 import { hasLLM } from "../lib/llm";
-import { DAY_NAMES, SAVE_KEY, addDays, crossesMidnight, defaultForm, describeForm, formProblem, fromMin, isoDay, loadSaved, makePlan, nowStamp, save, shortDate, slotsFor, toMin } from "../lib/schedule";
+import { DAY_NAMES, SAVE_KEY, addDays, crossesMidnight, defaultForm, formProblem, fromMin, loadSaved, makePlan, nowStamp, save, shortDate, toMin } from "../lib/schedule";
 import type { Busy, Confidence, Plan, PlanForm, PlanKind, PlanTopic } from "../lib/schedule";
 import { planHasUnsupportedText, savePlanPdf } from "../lib/schedulePdf";
 import { useStore } from "../lib/store";
@@ -14,7 +14,6 @@ const LEVELS: { id: Confidence; label: string }[] = [
   { id: "ok", label: "OK" },
   { id: "strong", label: "Strong" },
 ];
-const SESSIONS = [25, 45, 60, 90];
 const RANGES = [
   { label: "1 day", days: 0 },
   { label: "1 week", days: 6 },
@@ -31,12 +30,12 @@ const BUSY_DAYS: { id: string; label: string; days: number[] }[] = [
 const busyId = (b: Busy) => (b.date !== undefined ? "date" : BUSY_DAYS.find((o) => o.days.length === b.days.length && o.days.every((d) => b.days.includes(d)))?.id ?? "all");
 const KIND_LABEL: Record<PlanKind, string> = { learn: "Learn", practice: "Practice", revise: "Revise", test: "Test" };
 
-/** A length in a topic name ("3 hours", "2.5 hrs", "90 min") as minutes, when it is one the form accepts (15-360). */
+/** A length in a topic name ("3 hours", "2.5 hrs", "90 min") as minutes. */
 function durationIn(name: string): number | undefined {
   const m = /(\d+(?:\.\d+)?)\s*(hours?|hrs?|h|minutes?|mins?)\b/i.exec(name);
   if (!m) return undefined;
   const n = Math.round(Number(m[1]) * (/^h/i.test(m[2]) ? 60 : 1));
-  return n >= 15 && n <= 360 ? n : undefined;
+  return n > 0 ? n : undefined;
 }
 
 /** Study planner: the form's inputs go to the AI, which returns the plan. One step back is always available. */
@@ -50,20 +49,12 @@ export function Schedule() {
   /** what the last change replaced: the form and plan as they were before it */
   const [undo, setUndo] = useState<{ form: PlanForm; plan: Plan | null; what: string } | null>(null);
   const ctl = useRef<AbortController | null>(null);
-  const [, tick] = useState(0);
 
   useEffect(() => save(form, plan), [form, plan]);
   useEffect(() => () => ctl.current?.abort(), []);
-  useEffect(() => {
-    const t = setInterval(() => tick((n) => n + 1), 30_000); // keep the "now" line honest while the page is open
-    return () => clearInterval(t);
-  }, []);
 
   const now = new Date();
-  const today = isoDay(now);
-  const problem = formProblem(form, now);
-  const slots = problem ? [] : slotsFor(form, now);
-  const startDay = form.start < today ? today : form.start;
+  const problem = formProblem(form);
   const set = (p: Partial<PlanForm>) => setForm((f) => ({ ...f, ...p }));
   const setTopic = (i: number, p: Partial<PlanTopic>) => setForm((f) => ({ ...f, topics: f.topics.map((t, k) => (k === i ? { ...t, ...p } : t)) }));
   // Typing a duration in the name ("Science sample paper (3 hours)") fills the fixed length, unless the student already set one.
@@ -94,7 +85,7 @@ export function Schedule() {
     const c = new AbortController();
     ctl.current = c;
     try {
-      const p = await makePlan(settings, { ...form, start: startDay }, { signal: c.signal });
+      const p = await makePlan(settings, form, { signal: c.signal });
       setUndo({ form, plan, what: "new plan" });
       setPlan(p);
     } catch (e) {
@@ -149,50 +140,43 @@ export function Schedule() {
           </div>
           <section>
             <label className="sc-label" htmlFor="sc-goal">Goal <span className="sc-opt">optional</span></label>
-            <input id="sc-goal" value={form.goal} placeholder="e.g. Class 10 pre-boards" maxLength={80} onChange={(e) => set({ goal: e.target.value })} />
+            <input id="sc-goal" value={form.goal} placeholder="e.g. Class 10 pre-boards" onChange={(e) => set({ goal: e.target.value })} />
           </section>
 
           <section>
             <span className="sc-label" id="sc-topics-l">What do you need to study?</span>
             <div className="sc-topics" role="group" aria-labelledby="sc-topics-l">
-              {form.topics.map((t, i) => {
-                const name = t.name || "topic " + (i + 1);
-                return (
-                  <div className="sc-topic" key={i}>
-                    <input aria-label={`Subject or topic ${i + 1}`} value={t.name} placeholder={i === 0 ? "e.g. Quadratic equations" : "Another subject or topic"} maxLength={80} onChange={(e) => setTopicName(i, e.target.value)} />
-                    <div className="sc-seg" role="radiogroup" aria-label={`How confident are you in ${t.name || "this topic"}?`}>
-                      {LEVELS.map((l) => (
-                        <button type="button" key={l.id} role="radio" aria-checked={t.level === l.id} className={t.level === l.id ? "on " + l.id : ""} onClick={() => setTopic(i, { level: l.id })}>{l.label}</button>
-                      ))}
-                    </div>
-                    {form.topics.length > 1 && (
-                      <button type="button" className="icon-btn" aria-label={`Remove ${t.name || "topic " + (i + 1)}`} onClick={() => set({ topics: form.topics.filter((_, k) => k !== i) })}><Trash2 size={16} /></button>
-                    )}
-                    <div className="sc-len">
-                      <div className="sc-len-row">
-                        <span className="sc-len-l">Fixed length</span>
-                        <input
-                          type="number"
-                          inputMode="numeric"
-                          min={15}
-                          max={360}
-                          step={15}
-                          placeholder="flexible"
-                          aria-label={`Fixed length in minutes for ${name}`}
-                          value={t.minutes ?? ""}
-                          onChange={(e) => setTopic(i, { minutes: e.target.value === "" || !Number.isFinite(Number(e.target.value)) ? undefined : Number(e.target.value) })}
-                          onBlur={() => t.minutes !== undefined && setTopic(i, { minutes: Math.min(360, Math.max(15, Math.round(t.minutes))) })}
-                        />
-                        <span className="sc-len-u muted">min</span>
-                      </div>
-                      {t.minutes !== undefined && <p className="sc-len-hint">One block of {t.minutes} min</p>}
-                    </div>
+              {form.topics.map((t, i) => (
+                <div className="sc-topic" key={i}>
+                  <input aria-label={`Subject or topic ${i + 1}`} value={t.name} placeholder={i === 0 ? "e.g. Quadratic equations" : "Another subject or topic"} onChange={(e) => setTopicName(i, e.target.value)} />
+                  <div className="sc-seg" role="radiogroup" aria-label={`How confident are you in ${t.name || "this topic"}?`}>
+                    {LEVELS.map((l) => (
+                      <button type="button" key={l.id} role="radio" aria-checked={t.level === l.id} className={t.level === l.id ? "on " + l.id : ""} onClick={() => setTopic(i, { level: l.id })}>{l.label}</button>
+                    ))}
                   </div>
-                );
-              })}
+                  {form.topics.length > 1 && (
+                    <button type="button" className="icon-btn" aria-label={`Remove ${t.name || "topic " + (i + 1)}`} onClick={() => set({ topics: form.topics.filter((_, k) => k !== i) })}><Trash2 size={16} /></button>
+                  )}
+                  <div className="sc-len">
+                    <div className="sc-len-row">
+                      <span className="sc-len-l">Fixed length</span>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        placeholder="flexible"
+                        aria-label={`Fixed length in minutes for ${t.name || "topic " + (i + 1)}`}
+                        value={t.minutes ?? ""}
+                        onChange={(e) => setTopic(i, { minutes: e.target.value === "" ? undefined : Number(e.target.value) })}
+                      />
+                      <span className="sc-len-u muted">min</span>
+                    </div>
+                    {t.minutes !== undefined && <p className="sc-len-hint">One block of {t.minutes} min</p>}
+                  </div>
+                </div>
+              ))}
             </div>
             <div className="sc-addrow">
-              <button type="button" className="sc-add" disabled={form.topics.length >= 12} onClick={() => set({ topics: [...form.topics, { name: "", level: "ok" }] })}><Plus size={15} /> Add another</button>
+              <button type="button" className="sc-add" onClick={() => set({ topics: [...form.topics, { name: "", level: "ok" }] })}><Plus size={15} /> Add another</button>
               {lessons.map((d) => (
                 <button type="button" key={d.id} className="chip sc-lesson" title="Add from your lessons" onClick={() => set({ topics: [...form.topics.filter((t) => t.name.trim()), { name: d.title.slice(0, 80), level: "ok" }] })}>
                   <Plus size={12} /> {d.title.length > 28 ? d.title.slice(0, 27) + "…" : d.title}
@@ -204,17 +188,17 @@ export function Schedule() {
           <section className="sc-two">
             <div>
               <label className="sc-label" htmlFor="sc-start">Start</label>
-              <input id="sc-start" type="date" min={today} value={startDay} onChange={(e) => e.target.value && set({ start: e.target.value })} />
+              <input id="sc-start" type="date" value={form.start} onChange={(e) => e.target.value && set({ start: e.target.value })} />
             </div>
             <div>
               <label className="sc-label" htmlFor="sc-end">Exam or deadline</label>
-              <input id="sc-end" type="date" min={today} value={form.end} onChange={(e) => e.target.value && set({ end: e.target.value })} />
+              <input id="sc-end" type="date" value={form.end} onChange={(e) => e.target.value && set({ end: e.target.value })} />
             </div>
             <div className="sc-quick" role="group" aria-label="Quick deadline">
               {RANGES.map((r) => {
-                const on = addDays(startDay, r.days) === form.end;
+                const on = addDays(form.start, r.days) === form.end;
                 return (
-                  <button type="button" key={r.label} className={"chip" + (on ? " on" : "")} aria-pressed={on} onClick={() => set({ end: addDays(startDay, r.days) })}>{r.label}</button>
+                  <button type="button" key={r.label} className={"chip" + (on ? " on" : "")} aria-pressed={on} onClick={() => set({ end: addDays(form.start, r.days) })}>{r.label}</button>
                 );
               })}
             </div>
@@ -239,32 +223,28 @@ export function Schedule() {
               <input id="sc-to" type="time" value={form.to} onChange={(e) => e.target.value && set({ to: e.target.value })} />
             </div>
             <p className={"sc-timehint" + (crossesMidnight(form) ? " night" : "")} id="sc-timehint">
-              {crossesMidnight(form) ? <><Moon size={13} aria-hidden /> Sessions can run past midnight, until {form.to} the next morning.</> : <>Study is planned between {form.from} and {form.to}. For a late night, set an end time after midnight (like 02:00).</>}
+              {crossesMidnight(form) ? <><Moon size={13} aria-hidden /> Runs past midnight, until {form.to} the next morning.</> : <>Daily window: {form.from} to {form.to}.</>}
             </p>
             <div>
-              <span className="sc-label" id="sc-sess-l">Session length</span>
-              <div className="sc-seg wide" role="radiogroup" aria-labelledby="sc-sess-l">
-                {SESSIONS.map((m) => (
-                  <button type="button" key={m} role="radio" aria-checked={form.session === m} className={form.session === m ? "on" : ""} onClick={() => set({ session: m })}>{m}m</button>
-                ))}
-              </div>
+              <label className="sc-label" htmlFor="sc-session">Session length (minutes)</label>
+              <input id="sc-session" type="number" inputMode="numeric" value={form.session} onChange={(e) => set({ session: Number(e.target.value) })} />
             </div>
           </section>
 
           <section>
-            <span className="sc-label" id="sc-busy-l">Busy times <span className="sc-opt">no study during these</span></span>
+            <span className="sc-label" id="sc-busy-l">Busy times <span className="sc-opt">optional</span></span>
             <div className="sc-busy" role="group" aria-labelledby="sc-busy-l">
               {form.busy.map((b, i) => {
                 const overnight = toMin(b.to) < toMin(b.from);
                 return (
                   <div className="sc-busy-row" key={i}>
-                    <input aria-label={`Busy block ${i + 1} name`} value={b.label} maxLength={40} placeholder="e.g. Physics tuition" onChange={(e) => setBusy_(i, { label: e.target.value })} />
+                    <input aria-label={`Busy block ${i + 1} name`} value={b.label} placeholder="e.g. Physics tuition" onChange={(e) => setBusy_(i, { label: e.target.value })} />
                     <select
                       aria-label="Which days"
                       value={busyId(b)}
                       onChange={(e) => {
                         const o = BUSY_DAYS.find((x) => x.id === e.target.value);
-                        setBusy_(i, e.target.value === "date" ? { days: [], date: b.date ?? today } : { days: o?.days ?? [], date: undefined });
+                        setBusy_(i, e.target.value === "date" ? { days: [], date: b.date ?? form.start } : { days: o?.days ?? [], date: undefined });
                       }}
                     >
                       {BUSY_DAYS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
@@ -281,16 +261,16 @@ export function Schedule() {
                   </div>
                 );
               })}
-              <button type="button" className="sc-add" disabled={form.busy.length >= 8} onClick={() => set({ busy: [...form.busy, { label: "", days: [], from: "16:00", to: "17:00" }] })}><Plus size={15} /> Add a busy time</button>
+              <button type="button" className="sc-add" onClick={() => set({ busy: [...form.busy, { label: "", days: [], from: "16:00", to: "17:00" }] })}><Plus size={15} /> Add a busy time</button>
             </div>
           </section>
           <section>
             <label className="sc-label" htmlFor="sc-notes">Anything else? <span className="sc-opt">optional</span></label>
-            <textarea id="sc-notes" rows={3} maxLength={600} value={form.notes} placeholder="e.g. Maths is my weakest. Tuition on Tuesdays. I want Sundays lighter." onChange={(e) => set({ notes: e.target.value })} />
+            <textarea id="sc-notes" rows={3} value={form.notes} placeholder="e.g. Maths is my weakest. Tuition on Tuesdays. I want Sundays lighter." onChange={(e) => set({ notes: e.target.value })} />
           </section>
 
           <p className="sc-now" role="status">
-            <Clock size={14} aria-hidden /> It's {nowStamp(now).replace(/ \(.*$/, "")}. {problem ? problem : `${slots.length} study day${slots.length === 1 ? "" : "s"} in range${slots[0]?.date === today ? `, starting today at ${fromMin(slots[0].startMin)}` : ""}.`}
+            <Clock size={14} aria-hidden /> It's {nowStamp(now).replace(/ \(.*$/, "")}.{problem ? ` ${problem}` : ""}
           </p>
 
           {busy ? (
@@ -306,7 +286,7 @@ export function Schedule() {
             <div className="sc-empty">
               <Loader2 size={30} className="spin" aria-hidden />
               <h2>Planning your days…</h2>
-              <p className="muted">The AI is writing the plan. This usually takes 10 to 60 seconds.</p>
+              <p className="muted">The AI is writing the plan. This can take up to a minute.</p>
             </div>
           ) : !plan ? (
             <div className="sc-empty">
@@ -324,8 +304,8 @@ export function Schedule() {
 }
 
 function PlanView({ plan, pdfBusy, onPdf, onAgain, canAgain }: { plan: Plan; pdfBusy: boolean; onPdf: () => void; onAgain: () => void; canAgain: boolean }) {
-  const sessions = plan.days.reduce((n, d) => n + d.sessions.length, 0);
-  const mins = plan.days.reduce((n, d) => n + d.sessions.reduce((a, s) => a + s.minutes, 0), 0);
+  const sessions = plan.days.reduce((n, d) => n + (d.sessions?.length ?? 0), 0);
+  const mins = plan.days.reduce((n, d) => n + (d.sessions ?? []).reduce((a, s) => a + (Number(s.minutes) || 0), 0), 0);
   const hours = Math.round((mins / 60) * 10) / 10;
   return (
     <>
@@ -347,24 +327,24 @@ function PlanView({ plan, pdfBusy, onPdf, onAgain, canAgain }: { plan: Plan; pdf
           <li key={d.date} className="sc-day">
             <div className="sc-date"><b>{shortDate(d.date).split(" ").slice(0, 2).join(" ")}</b><span>{shortDate(d.date).split(" ").slice(2).join(" ")}</span></div>
             <ul>
-              {d.sessions.map((s, i) => (
+              {(d.sessions ?? []).map((s, i) => (
                 <li key={i}>
                   <span className="sc-time">
-                    {s.start}–{fromMin(toMin(s.start) + s.minutes)}
+                    {s.start}–{fromMin(toMin(s.start) + Number(s.minutes))}
                     {s.late && <sup className="sc-late" title="After midnight, still part of this study day">+1</sup>}
                   </span>
                   <div>
                     <b>{s.topic}</b>
                     <p>{s.task}</p>
                   </div>
-                  <span className={"sc-kind " + s.kind}>{KIND_LABEL[s.kind]}</span>
+                  <span className={"sc-kind " + s.kind}>{KIND_LABEL[s.kind] ?? s.kind}</span>
                 </li>
               ))}
             </ul>
           </li>
         ))}
       </ol>
-      {!!plan.tips.length && (
+      {!!plan.tips?.length && (
         <div className="sc-tips">
           <h3><Check size={16} aria-hidden /> Tips for this plan</h3>
           <ul>{plan.tips.map((t, i) => <li key={i}>{t}</li>)}</ul>
