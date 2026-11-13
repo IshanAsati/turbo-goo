@@ -151,3 +151,6 @@
   .sc-len-row { gap: 6px; }
   .sc-form .sc-len input { width: 100px; }
 }
+
+/* the one big box: the whole planner input */
+.sc-big { width: 100%; min-height: 380px; padding: 18px 20px; font-size: 16px; line-height: 1.6; border-radius: 18px; resize: vertical; }
