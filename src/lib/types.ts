@@ -63,6 +63,7 @@ export type Doc = {
   folderId: string | null;
   kind: DocKind;
   subject?: Subject; // picked by the user, or detected from the content on first generation
+  openedAt?: number; // last time the user opened it (drives Jump back in and Opened x ago)
   source: string; // raw text / transcript used for grounding
   sourceUrl?: string;
   hasAudio?: boolean; // audio blob stored under key audio:<id>

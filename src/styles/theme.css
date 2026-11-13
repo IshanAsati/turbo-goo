@@ -1,0 +1,74 @@
+/* TurboGoo base theme (loaded after styles.css, so it wins on equal specificity).
+   Shared primitives only: typography, buttons, inputs, pills, cards, key-term colouring.
+   Screen-specific layout lives in each screen's own stylesheet (src/styles/*.css). */
+
+body { background: var(--bg); font-size: 15px; line-height: 1.55; }
+::selection { background: color-mix(in srgb, var(--hl) var(--sel), transparent); color: inherit; }
+
+h1, h2, h3, .display { font-family: var(--f-display); font-weight: 800; letter-spacing: -.02em; font-variation-settings: normal; }
+.display em { font-style: normal; color: var(--link); font-variation-settings: normal; font-weight: 800; }
+.eyebrow { font: 700 11px/1.4 var(--f-body); letter-spacing: .1em; }
+.tally { font-family: var(--f-body); font-weight: 600; }
+
+/* ---- buttons: chunky, with a darker bottom edge that squashes on press ---- */
+button { border-radius: 14px; border: 1.5px solid var(--line); background: var(--panel); color: var(--ink); font-weight: 600; transition: background .12s, border-color .12s, transform .08s, filter .12s; }
+button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--ink) 35%, var(--line)); background: var(--panel2); }
+button:active:not(:disabled) { transform: translateY(1px); }
+button.primary, .btn-primary {
+  background: var(--brand); color: var(--brand-ink); border: 0; border-bottom: 4px solid var(--brand-edge); padding-bottom: 6px;
+  border-radius: 14px; font-weight: 700; box-shadow: none; transform: none;
+}
+button.primary:hover:not(:disabled) { background: var(--brand); filter: brightness(1.1); box-shadow: none; transform: none; border-color: transparent; border-bottom-color: var(--brand-edge); }
+button.primary:active:not(:disabled) { transform: translateY(2px); border-bottom-width: 2px; padding-bottom: 8px; }
+button.primary:disabled { filter: saturate(.5) brightness(.8); }
+button.link { color: var(--link); text-decoration: none; background: none; border: 0; }
+button.link:hover { text-decoration: underline; background: none; }
+.ghost-btn { border-color: transparent; background: transparent; color: var(--muted); }
+.icon-btn { border: 0; background: none; border-radius: 10px; }
+.icon-btn:hover:not(:disabled) { background: var(--panel2); }
+
+/* ---- pills / chips ---- */
+.pill-btn, .chip { border-radius: 999px; padding: 6px 14px; font-weight: 600; font-size: 13.5px; background: var(--panel); border: 1.5px solid var(--line); }
+.chip.on { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+.seg { border-radius: 999px; background: var(--panel); border: 1.5px solid var(--line); padding: 3px; }
+.seg button { border-radius: 999px; border: 0; background: none; color: var(--muted); }
+.seg button:hover:not(:disabled) { background: none; color: var(--ink); }
+.seg button.on { background: var(--brand); color: var(--brand-ink); box-shadow: none; }
+
+/* ---- inputs ---- */
+input, textarea, select { background: var(--panel); border: 1.5px solid var(--line); border-radius: 14px; }
+input:focus, textarea:focus, select:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+::placeholder { color: color-mix(in srgb, var(--muted) 75%, transparent); }
+kbd { border-radius: 6px; background: var(--panel2); }
+
+/* ---- cards / panels ---- */
+.panel, .card, .callout, .dialog, .menu { border-radius: var(--r); }
+.panel { background: var(--panel); border: 1.5px solid var(--line); }
+.dialog { background: var(--panel); border: 1.5px solid var(--line); box-shadow: 0 24px 60px rgb(0 0 0 / .45); }
+.menu { background: var(--panel); border: 1.5px solid var(--line); box-shadow: 0 12px 32px rgb(0 0 0 / .4); }
+.modal { background: rgb(0 0 0 / .6); backdrop-filter: blur(2px); }
+.toast { border-radius: 14px; box-shadow: 0 12px 32px rgb(0 0 0 / .4); }
+.callout { border-left-width: 1.5px; }
+
+/* ---- notes content: key terms are violet, not highlighter-yellow ---- */
+.md { font-size: 16px; line-height: 1.7; }
+.md h1, .md h2, .md h3 { font-family: var(--f-display); font-weight: 800; }
+.md h2 { border-bottom: 0; padding-bottom: 0; margin-top: 1.7em; }
+.md strong { background: none; color: var(--link); font-weight: 700; }
+.md blockquote { font-style: italic; border-left: 3px solid var(--brand); background: transparent; border-radius: 0; padding: 2px 14px; color: color-mix(in srgb, var(--ink) 88%, transparent); }
+.md li::marker { color: var(--link); }
+.md code { background: var(--panel2); }
+.md th { font-family: var(--f-body); color: var(--muted); border-bottom: 1.5px solid var(--line); }
+.md th, .md td { border-bottom-color: var(--line); }
+
+/* ---- mascot / shared bits ---- */
+.mascot { display: block; margin: 0 auto; }
+.badge, .due-pill { background: var(--brand); color: var(--brand-ink); border-radius: 999px; font-family: var(--f-body); font-weight: 700; }
+.bar > div, .progress-line > div { background: var(--brand); border-radius: 999px; }
+.bar, .progress-line { border-radius: 999px; background: var(--panel3); }
+:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+
+@media print {
+  :root, :root[data-theme="dark"], :root[data-theme="light"] { --bg: #fff; --panel: #fff; --panel2: #f1f1f1; --ink: #111; --muted: #444; --line: #ccc; --link: #4a2fb0; color-scheme: light; }
+  .md strong { color: #111; }
+}

@@ -1,11 +1,14 @@
-import { useMemo, useState } from "react";
-import { Download, Pencil, Plus, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Download, Pencil, Plus, RefreshCw, Sparkles, Trash2 } from "lucide-react";
 import { isDue, newCard } from "../lib/srs";
-import { recordActivity, uid, updateDoc } from "../lib/store";
+import { recordActivity, uid, updateDoc, useJob } from "../lib/store";
+import { generateCards, regenerate } from "../lib/generate";
 import type { Card, Doc } from "../lib/types";
 import { Markdown } from "../components/Markdown";
 import { ReviewDeck } from "../components/ReviewDeck";
+import { GeneratorScreen } from "../components/GeneratorScreen";
 import { confirmDialog } from "../components/feedback";
+import "../styles/study.css";
 
 type Mode = "due" | "all" | "browse";
 
@@ -18,9 +21,13 @@ export function download(name: string, text: string, type = "text/plain") {
 }
 
 export function Flashcards({ doc }: { doc: Doc }) {
+  const job = useJob(doc.id + ":cards");
   const due = doc.cards.filter((c) => isDue(c)).length;
-  const [mode, setMode] = useState<Mode>(due ? "due" : doc.cards.length ? "browse" : "browse");
+  const [picked, setPicked] = useState<Mode | null>(null);
   const [session, setSession] = useState(0);
+  const [more, setMore] = useState(false); // the student opened the generator to add more cards to an existing deck
+  const before = useRef(0);
+  const mode: Mode = picked ?? (due ? "due" : "browse");
   const avg = doc.cards.length ? Math.round(doc.cards.reduce((a, c) => a + c.mastery, 0) / doc.cards.length) : 0;
 
   const items = useMemo(
@@ -29,18 +36,55 @@ export function Flashcards({ doc }: { doc: Doc }) {
     [mode, session],
   );
 
+  // An empty deck (new, or just cleared by Regenerate) starts fresh; freshly written cards open in Due.
+  useEffect(() => {
+    if (!doc.cards.length) setPicked(null);
+  }, [doc.cards.length]);
+  useEffect(() => {
+    if (more && !job && doc.cards.length > before.current) {
+      setMore(false);
+      setPicked(null);
+      setSession((s) => s + 1);
+    }
+  }, [more, job, doc.cards.length]);
+
+  const generating = !!job && !job.error;
+  if (!doc.cards.length || more || generating || job?.error) {
+    return (
+      <div className="st-wrap">
+        <GeneratorScreen
+          doc={doc}
+          kind="cards"
+          job={job}
+          jobKey={doc.id + ":cards"}
+          onGenerate={(o) => ((before.current = doc.cards.length), void generateCards(doc, o))}
+          onBack={doc.cards.length ? () => setMore(false) : undefined}
+        />
+      </div>
+    );
+  }
+
+  const pick = (m: Mode) => (setPicked(m), m !== "browse" && setSession((s) => s + 1));
+
   return (
-    <div>
-      <div className="toolbar-row">
-        <div className="seg">
-          <button className={mode === "due" ? "on" : ""} onClick={() => (setMode("due"), setSession((s) => s + 1))}>Due <span className="count">{due}</span></button>
-          <button className={mode === "all" ? "on" : ""} onClick={() => (setMode("all"), setSession((s) => s + 1))}>Study all</button>
-          <button className={mode === "browse" ? "on" : ""} onClick={() => setMode("browse")}>Browse &amp; edit</button>
+    <div className="st-wrap fc">
+      <div className="fc-bar">
+        <div className="seg" role="tablist" aria-label="Study mode">
+          <button role="tab" aria-selected={mode === "due"} className={mode === "due" ? "on" : ""} onClick={() => pick("due")}>Due <span className="fc-count">{due}</span></button>
+          <button role="tab" aria-selected={mode === "all"} className={mode === "all" ? "on" : ""} onClick={() => pick("all")}>Study all</button>
+          <button role="tab" aria-selected={mode === "browse"} className={mode === "browse" ? "on" : ""} onClick={() => pick("browse")}>Browse &amp; edit</button>
         </div>
+        <span className="fc-score" title="Average mastery across the deck">Mastery <b>{avg}%</b></span>
         <span className="spacer" />
-        <span className="muted small">Knowledge score {avg}%</span>
-        <button onClick={() => download(`${doc.title}-flashcards.txt`, ankiTsv(doc.cards))} disabled={!doc.cards.length} title="Tab-separated; import into Anki via File → Import">
-          <Download size={15} /> Anki
+        <button className="fc-act" onClick={() => (before.current = doc.cards.length, setMore(true))} title="Write more flashcards from your notes"><Sparkles size={15} /> Generate more</button>
+        <button
+          className="fc-act"
+          onClick={async () => (await confirmDialog("Regenerate flashcards?", "Your current flashcards and their progress will be removed, then you can choose how to write a new set.", "Regenerate", true)) && regenerate(doc, "cards")}
+        >
+          <RefreshCw size={15} /> Regenerate
+        </button>
+        <button className="fc-act fc-icon" aria-label="Export to Anki" onClick={() => download(`${doc.title}-flashcards.txt`, ankiTsv(doc.cards))} title="Export to Anki (tab-separated; import via File → Import)">
+          <Download size={16} />
         </button>
       </div>
 
@@ -48,13 +92,14 @@ export function Flashcards({ doc }: { doc: Doc }) {
         <ReviewDeck
           key={mode + session}
           items={items}
-          emptyText={doc.cards.length ? "Nothing due. You're all caught up!" : "No flashcards yet."}
-          onGrade={(item, updated) => {
+          emptyText={mode === "due" ? "Nothing due. You're all caught up!" : "No flashcards yet."}
+          onGrade={(_item, updated) => {
             recordActivity();
             updateDoc(doc.id, (d) => ({ cards: d.cards.map((c) => (c.id === updated.id ? updated : c)) }));
           }}
         >
-          <button onClick={() => setMode("browse")}>Browse cards</button>
+          {mode === "due" && <button className="primary" onClick={() => pick("all")}>Study all cards</button>}
+          <button onClick={() => pick("browse")}>Browse cards</button>
         </ReviewDeck>
       ) : (
         <Browse doc={doc} />
@@ -78,37 +123,36 @@ function Browse({ doc }: { doc: Doc }) {
   };
 
   return (
-    <div>
-      <div className="card add-card">
-        <b className="small">Add your own card</b>
-        <div className="row">
+    <div className="fc-browse">
+      <div className="fc-add">
+        <b>Add your own card</b>
+        <div className="fc-add-row">
           <input aria-label="Front" placeholder="Front (question or term)" value={front} onChange={(e) => setFront(e.target.value)} />
           <input aria-label="Back" placeholder="Back (answer)" value={back} onChange={(e) => setBack(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} />
           <button className="primary" onClick={add} disabled={!front.trim() || !back.trim()}><Plus size={15} /> Add</button>
         </div>
       </div>
-      {doc.cards.length === 0 && <p className="muted">No cards yet. Add one above, or they appear here once generation finishes.</p>}
-      <ul className="card-list">
+      <ul className="fc-list">
         {doc.cards.map((c) => (
-          <li key={c.id} className="card">
+          <li key={c.id} className="fc-item">
             {editing === c.id ? (
-              <div className="stack">
+              <div className="fc-edit">
                 <input aria-label="Front" value={ef} onChange={(e) => setEf(e.target.value)} />
                 <textarea aria-label="Back" rows={2} value={eb} onChange={(e) => setEb(e.target.value)} />
-                <div className="row">
+                <div className="fc-edit-row">
                   <button className="primary" disabled={!ef.trim() || !eb.trim()} onClick={() => (updateDoc(doc.id, (d) => ({ cards: d.cards.map((x) => (x.id === c.id ? { ...x, front: ef.trim(), back: eb.trim() } : x)) })), setEditing(null))}>Save</button>
                   <button onClick={() => setEditing(null)}>Cancel</button>
                 </div>
               </div>
             ) : (
               <>
-                <div className="cl-main">
-                  <Markdown text={c.front} className="cl-front" />
-                  <Markdown text={c.back} className="cl-back" />
+                <div className="fc-item-main">
+                  <Markdown text={c.front} className="fc-front" />
+                  <Markdown text={c.back} className="fc-back" />
                 </div>
-                <div className="cl-meta">
+                <div className="fc-item-meta">
                   <div className="bar mini" title={`Mastery ${c.mastery}%`}><div style={{ width: `${c.mastery}%` }} /></div>
-                  <small className="muted">{c.reps === 0 ? "new" : isDue(c) ? "due" : `in ${Math.max(1, Math.round((c.due - Date.now()) / 864e5))}d`}</small>
+                  <small>{c.reps === 0 ? "new" : isDue(c) ? "due" : `in ${Math.max(1, Math.round((c.due - Date.now()) / 864e5))}d`}</small>
                   <button className="icon-btn" aria-label="Edit card" onClick={() => (setEditing(c.id), setEf(c.front), setEb(c.back))}><Pencil size={15} /></button>
                   <button
                     className="icon-btn"

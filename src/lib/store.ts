@@ -22,7 +22,7 @@ export const defaultSettings: Settings = {
   ttsModel: "tts-1",
   ttsVoiceA: "nova",
   ttsVoiceB: "onyx",
-  theme: "system",
+  theme: "dark",
   useHDVoices: false,
 };
 
@@ -162,6 +162,10 @@ export function updateDoc(id: string, patch: Partial<Doc> | ((d: Doc) => Partial
   }));
 }
 
+/** Records that the user opened a document, without touching updatedAt (so the library order does not jump). */
+export function markOpened(id: string) {
+  setState((s) => ({ ...s, docs: s.docs.map((d) => (d.id === id ? { ...d, openedAt: Date.now() } : d)) }));
+}
 export function deleteDoc(id: string) {
   setState((s) => ({ ...s, docs: s.docs.filter((d) => d.id !== id) }));
 }

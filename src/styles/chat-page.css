@@ -1,0 +1,53 @@
+/* Standalone chat page (#/chat): thread list, rounded bubbles, composer card (shared styles in shell.css). */
+
+.chat-shell { grid-template-columns: 280px minmax(0, 1fr); height: calc(100vh - var(--topbar-h)); height: calc(100dvh - var(--topbar-h)); }
+.threads { border-right: 1.5px solid var(--line); padding: 8px 12px 16px; gap: 14px; }
+.threads .new-chat { height: 42px; border-radius: 999px; padding: 0 16px 2px; }
+.threads li { border-radius: 14px; }
+.threads li.on { background: var(--brand-soft); }
+.thread-btn { border-radius: 14px; padding: 9px 36px 9px 12px; }
+.thread-title { font-size: 14px; font-weight: 600; }
+.threads li.on .thread-title { color: var(--link); }
+.thread-meta { font: 500 12px var(--f-body); }
+.thread-del { border-radius: 50%; }
+
+.convo { height: calc(100vh - var(--topbar-h)); height: calc(100dvh - var(--topbar-h)); max-width: 860px; padding: 8px 28px 20px; }
+.convo.drag::after { border-radius: 24px; border-color: var(--brand); color: var(--link); font-family: var(--f-display); font-weight: 700; }
+.convo-head { border-bottom: 0; padding-bottom: 4px; margin-bottom: 4px; gap: 14px; min-height: 44px; }
+.convo-title { font-size: 1.25rem; font-weight: 800; letter-spacing: -.02em; }
+.make-set { height: 36px; padding: 0 16px; border-radius: 999px; font-size: 13.5px; white-space: nowrap; color: var(--link); background: var(--brand-soft); border-color: transparent; flex: none; }
+.make-set:hover:not(:disabled) { background: var(--brand-soft); border-color: var(--link); }
+
+.msgs { gap: 16px; padding: 8px 4px 18px; }
+.msg { max-width: min(86%, 680px); padding: 12px 18px; border-radius: 22px 22px 22px 6px; background: var(--panel); border: 1.5px solid var(--line); line-height: 1.6; overflow-wrap: anywhere; }
+.msg.user { border-radius: 22px 22px 6px 22px; background: var(--brand); border-color: transparent; color: var(--brand-ink); }
+.msg.assistant { border-radius: 22px 22px 22px 6px; }
+.msg-att { font: 600 12px var(--f-body); text-transform: none; letter-spacing: 0; opacity: .85; }
+.msg .md { font-size: 15.5px; line-height: 1.65; }
+.msg .md > :first-child { margin-top: 0; } .msg .md > :last-child { margin-bottom: 0; }
+.msg-actions { margin-top: 8px; }
+.sources li::marker { font-family: var(--f-body); font-weight: 700; }
+
+.chat-empty { max-width: 600px; }
+.chat-empty .mascot { margin-bottom: 8px; }
+.chat-empty h2 { display: block; font-size: clamp(1.6rem, 4vw, 2.2rem); font-weight: 800; letter-spacing: -.03em; margin: 0 0 8px; }
+.chat-empty .suggest { gap: 8px; margin-top: 18px; }
+.chat-empty .chip { padding: 8px 16px; }
+
+.chat-composer { flex: none; border-radius: 26px; }
+.chat-composer textarea { min-height: 48px; max-height: 40vh; font-size: 16px; }
+
+@media (max-width: 900px) {
+  .chat-shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .threads { display: flex; flex-direction: row; align-items: center; gap: 8px; border-right: 0; border-bottom: 1.5px solid var(--line); padding: 8px 14px; overflow-x: auto; overflow-y: hidden; }
+  .threads .new-chat { width: auto; flex: none; }
+  .threads ol { display: flex; gap: 6px; }
+  .threads li { flex: none; max-width: 210px; }
+  .empty-threads { display: none; }
+  .convo { height: auto; min-height: 0; }
+}
+@media (max-width: 560px) {
+  .convo { padding: 6px 14px 14px; }
+  .msg { max-width: 94%; }
+  .convo-head { flex-wrap: wrap; }
+}

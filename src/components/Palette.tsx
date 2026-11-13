@@ -30,7 +30,7 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
   const due = docs.reduce((a, d) => a + dueCount(d.cards), 0);
   const items: Item[] = useMemo(() => {
     const actions: Item[] = [
-      { id: "a-lib", label: "Go to Library", icon: <Layers size={16} />, run: () => go("/") },
+      { id: "a-lib", label: "Go to Home", icon: <Layers size={16} />, run: () => go("/") },
       { id: "a-chat", label: "New chat", icon: <MessagesSquare size={16} />, run: () => go("/chat") },
       { id: "a-review", label: `Review due cards (${due})`, icon: <Layers size={16} />, run: () => go("/review") },
       { id: "a-learn", label: "Learn Mode", icon: <Compass size={16} />, run: () => go("/learn") },

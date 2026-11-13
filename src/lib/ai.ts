@@ -48,6 +48,21 @@ RULES:
 const noteTarget = (partWords: number) => (partWords < 450 ? Math.max(60, Math.round(partWords * 0.4)) : Math.max(120, Math.min(450, Math.round(partWords * 0.2))));
 const wordCount = (s: string) => s.trim().split(/\s+/).filter(Boolean).length;
 
+/** What the student asked for on the generator screens: an exact count and optional free-text focus. */
+export type GenOpt = Opt & { count?: number; instructions?: string };
+
+/** Short notes cannot support a big set. At most ~1 flashcard per 12 words of notes, ~1 question per 15 (never below 3). */
+export const notesCapacity = (notes: string) => {
+  const w = wordCount(notes);
+  return { cards: Math.max(3, Math.floor(w / 12)), questions: Math.max(3, Math.floor(w / 15)), words: w };
+};
+
+/** The student's own steer, appended to a generation prompt. Empty when they left it blank. */
+const studentSteer = (instructions?: string) => {
+  const t = (instructions ?? "").replace(/\s+/g, " ").trim().slice(0, 600);
+  return t ? `\n\nThe student's special instructions (follow them, but never invent facts that are not in the notes): ${t}` : "";
+};
+
 export async function genNotes(s: Settings, title: string, source: string, kind: DocKind, onPartial: (text: string) => void, o: Opt & { onThinking?: () => void } = {}): Promise<string> {
   if (hasLLM(s)) {
     const parts = segments(source, 14000);
@@ -112,24 +127,7 @@ const looksLikeTerm = (t: string) => {
 };
 const looksLikeDefinition = (d: string) => !/^(where|when|why|because|how|if|that|which)\b/i.test(d.trim());
 
-export async function genCards(s: Settings, source: string, o: Opt = {}): Promise<Card[]> {
-  if (hasLLM(s)) {
-    const parts = segments(source, 12000).slice(0, 3);
-    const words = wordCount(source);
-    // About one card per 25 words of notes, never fewer than 6 or more than 30 in total.
-    const total = Math.max(6, Math.min(30, Math.round(words / 25)));
-    const perPart = Math.max(4, Math.ceil(total / parts.length));
-    const all: { front: string; back: string }[] = [];
-    let failure: unknown;
-    for (const p of parts) {
-      let j: { cards: { front: string; back: string }[] } | null = null;
-      try {
-        j = await json<{ cards: { front: string; back: string }[] }>(
-        s,
-        "fast",
-        `You write spaced-repetition flashcards from a student's own study notes. Make at most ${perPart} cards, fewer if the notes do not support that many. Quality beats quantity.
-
-A good card:
+const CARD_RULES = `A good card:
 - tests ONE idea that a student must actually know: a definition, a law or formula, a cause and effect, a distinction between two things, or why/how something works;
 - has a front that is a specific question or prompt a student could answer from memory, and that makes sense on its own (never "this", "the above", "the passage", or "according to the notes");
 - has a back of 1-2 short sentences or a formula, under 25 words, that fully answers the front;
@@ -137,31 +135,64 @@ A good card:
 
 Do NOT make cards for: the document's title, headings, structure or "key takeaways" as such; trivia, dates, names or numbers unless the notes stress them; vague prompts like "Explain X" or "Describe the topic"; anything the notes do not state; or two cards that test the same fact in different words.
 
-Return only JSON: {"cards":[{"front":string,"back":string}]}.${guide(s, o.subject, "cards")}`,
-        p,
+Return only JSON: {"cards":[{"front":string,"back":string}]}.`;
+
+type RawCard = { front: string; back: string };
+const goodCards = (j: { cards?: RawCard[] } | null) => (j?.cards ?? []).filter((c) => c?.front && c?.back && c.front.trim().length > 8);
+
+/** `o.count` is the exact target the student picked (it replaces the size heuristic); `o.instructions` is their free-text focus; `o.avoid` lists fronts that already exist. */
+export async function genCards(s: Settings, source: string, o: GenOpt & { avoid?: string[] } = {}): Promise<Card[]> {
+  if (hasLLM(s)) {
+    const parts = segments(source, 12000).slice(0, 3);
+    const words = wordCount(source);
+    const exact = !!o.count;
+    // Without a chosen count: about one card per 25 words of notes, never fewer than 6 or more than 30 in total.
+    // With one: exactly that many, unless the notes are too short to support it.
+    const total = exact ? Math.max(1, Math.min(o.count!, notesCapacity(source).cards)) : Math.max(6, Math.min(30, Math.round(words / 25)));
+    const perPart = exact ? Math.ceil(total / parts.length) : Math.max(4, Math.ceil(total / parts.length));
+    const steer = studentSteer(o.instructions);
+    const ask = (text: string, n: number, have: string[]) =>
+      json<{ cards: RawCard[] }>(
+        s,
+        "fast",
+        `You write spaced-repetition flashcards from a student's own study notes. Make ${exact ? "exactly" : "at most"} ${n} cards${exact ? ", fewer only if the notes truly cannot support that many" : ", fewer if the notes do not support that many"}. Quality beats quantity.
+
+${CARD_RULES}${have.length ? `\nDo not repeat or rephrase these existing cards: ${have.slice(-40).join(" | ")}.` : ""}${guide(s, o.subject, "cards")}${steer}`,
+        text,
         o,
-        );
-      } catch (e) {
-        if (o.signal?.aborted) throw e;
-        failure = e; // keep the cards from the parts that did work
+      );
+    const all: RawCard[] = [];
+    const have = () => [...(o.avoid ?? []), ...all.map((c) => c.front)];
+    let failure: unknown;
+    for (const p of parts) {
+      // Big sets are written in batches (at most 30 each, split evenly) so one reply never has to hold 50 cards.
+      const batches = Math.ceil(perPart / 30);
+      for (let left = perPart, b = batches; left > 0; b--) {
+        const n = Math.ceil(left / b);
+        left -= n;
+        try {
+          all.push(...goodCards(await ask(p, n, have())));
+        } catch (e) {
+          if (o.signal?.aborted) throw e;
+          failure = e; // keep the cards from the batches that did work
+          break;
+        }
       }
-      if (j?.cards) all.push(...j.cards.filter((c) => c?.front && c?.back && c.front.trim().length > 8));
     }
-    // A thin reply (say 1 card from 180 words of notes) is a model hiccup: ask once more before accepting it.
-    if (all.length < Math.min(4, total) && !o.signal?.aborted) {
+    // A thin reply (say 1 card from 180 words of notes, or far short of the chosen count) is a model hiccup: ask once more.
+    const got = () => dedupeBy(all, (c) => c.front).length;
+    if (got() < (exact ? Math.ceil(total * 0.8) : Math.min(4, total)) && !o.signal?.aborted) {
       try {
-        const again = await json<{ cards: { front: string; back: string }[] }>(s, "fast", `Write flashcards from the notes: ${Math.min(total, 10)} cards, each testing one important idea, front is a specific question, back under 25 words. Return only JSON: {"cards":[{"front":string,"back":string}]}.${guide(s, o.subject, "cards")}`, parts[0], o);
-        if (again?.cards) all.push(...again.cards.filter((c) => c?.front && c?.back && c.front.trim().length > 8));
+        all.push(...goodCards(await ask(parts[0], exact ? Math.min(25, total - got()) : Math.min(total, 10), have())));
       } catch (e) {
         if (o.signal?.aborted) throw e;
         failure ??= e;
       }
     }
     if (!all.length && failure) throw failure;
-    if (all.length) return dedupeBy(all, (c) => c.front).slice(0, total + 4).map((c) => newCard(uid(), c.front.trim(), c.back.trim()));
+    if (all.length) return dedupeBy(all, (c) => c.front).slice(0, exact ? total : total + 4).map((c) => newCard(uid(), c.front.trim(), c.back.trim()));
     throw new LLMError("The model didn't write any usable flashcards from these notes. Try again, or pick a different model in Settings.");
   }
-
   const cards: Card[] = [];
   const seen = new Set<string>();
   for (const sent of sentences(source)) {
@@ -171,36 +202,42 @@ Return only JSON: {"cards":[{"front":string,"back":string}]}.${guide(s, o.subjec
       cards.push(newCard(uid(), `What ${/\bare\b/.test(sent) ? "are" : "is"} ${m[1].trim().replace(/^(A|An|The)\s/, (a) => a.toLowerCase())}?`, m[2].replace(/[.]$/, "")));
     }
   }
-  if (cards.length < 12) {
-    const kw = topKeywords(source, 30);
+  // Offline engine: honours the count (when the notes are long enough) but cannot follow free-text instructions.
+  const want = o.count ? Math.max(1, Math.min(o.count, notesCapacity(source).cards)) : 20;
+  if (cards.length < (o.count ? want : 12)) {
+    const kw = topKeywords(source, Math.max(30, want));
     const used = new Map<string, number>();
-    for (const sent of topSentences(source, 30)) {
+    for (const sent of topSentences(source, Math.max(30, want * 2))) {
       // blank out the least-used keyword in the sentence so cloze cards test different terms
       const present = kw.filter((k) => !k.includes("'") && new RegExp(`\\b${k}\\b`, "i").test(sent) && (used.get(k) ?? 0) < 2);
       const term = present.sort((a, b) => (used.get(a) ?? 0) - (used.get(b) ?? 0) || b.length - a.length)[0];
-      if (term && cards.length < 20) {
+      if (term && cards.length < want) {
         used.set(term, (used.get(term) ?? 0) + 1);
         cards.push(newCard(uid(), mask(sent, term), term));
       }
     }
   }
-  return cards;
+  const fresh = o.avoid?.length ? cards.filter((c) => !o.avoid!.includes(c.front)) : cards;
+  return o.count ? fresh.slice(0, want) : fresh;
 }
 
 /* ------------------------------------------------------------------ */
 /* Quiz                                                                 */
 /* ------------------------------------------------------------------ */
 
-export async function genQuiz(s: Settings, source: string, count = 10, avoid: string[] = [], o: Opt = {}): Promise<QuizQ[]> {
+export async function genQuiz(s: Settings, source: string, count = 10, avoid: string[] = [], o: GenOpt = {}): Promise<QuizQ[]> {
   if (hasLLM(s)) {
     const text = segments(source, 12000)[0];
-    // Short notes cannot support a long quiz: about one question per 40 words, between 4 and `count`.
-    const n = Math.max(4, Math.min(count, Math.round(wordCount(text) / 40)));
+    const exact = !!o.count;
+    // Without a chosen count: short notes cannot support a long quiz (about one question per 40 words, between 4 and `count`).
+    // With one (o.count): exactly that many, unless the notes are too short to support it.
+    const n = exact ? Math.max(1, Math.min(o.count!, notesCapacity(source).questions)) : Math.max(4, Math.min(count, Math.round(wordCount(text) / 40)));
+    const steer = studentSteer(o.instructions);
     const attempt = async (): Promise<QuizQ[]> => {
     const j = await json<{ questions: any[] }>(
       s,
       "fast",
-      `You write a short practice quiz from a student's own study notes. Write at most ${n} questions, fewer if the notes do not support that many. Every question must be answerable from the notes alone and must test understanding of an important idea, not trivia, wording or the document's structure.
+      `You write a short practice quiz from a student's own study notes. Write ${exact ? "exactly" : "at most"} ${n} questions, fewer ${exact ? "only if the notes truly cannot support that many" : "if the notes do not support that many"}. Every question must be answerable from the notes alone and must test understanding of an important idea, not trivia, wording or the document's structure.
 
 Mix: about half multiple choice ("mc"), a quarter fill-in-the-blank ("cloze"), a quarter short open-ended ("open").
 
@@ -210,7 +247,7 @@ Rules:
 - Open: a question that needs a 1-3 sentence answer, with "reference" holding a model answer taken from the notes.
 - Questions must not repeat each other or test the same fact twice, and must make sense on their own (never "according to the notes").${avoid.length ? ` Do not repeat or rephrase these existing questions: ${avoid.slice(-30).join(" | ")}.` : ""}
 
-Return only JSON: {"questions":[{"kind":"mc","q":string,"options":[4 strings],"answer":0-3,"explanation":string},{"kind":"cloze","q":string,"answer":string},{"kind":"open","q":string,"reference":string}]}.${guide(s, o.subject, "quiz")}`,
+Return only JSON: {"questions":[{"kind":"mc","q":string,"options":[4 strings],"answer":0-3,"explanation":string},{"kind":"cloze","q":string,"answer":string},{"kind":"open","q":string,"reference":string}]}.${guide(s, o.subject, "quiz")}${steer}`,
       text,
       o,
     );
@@ -219,24 +256,28 @@ Return only JSON: {"questions":[{"kind":"mc","q":string,"options":[4 strings],"a
       .filter((q) => q.kind !== "mc" || (Array.isArray(q.options) && q.options.length === 4 && Number.isInteger(q.answer) && q.answer >= 0 && q.answer < 4))
       .map((q) => ({ ...q, id: uid() }) as QuizQ);
     };
+    const fit = (list: QuizQ[]) => dedupeBy(list, (q) => q.q).slice(0, exact ? n : undefined);
+    const enough = exact ? Math.ceil(n * 0.8) : Math.min(3, n);
     const qs = await attempt();
-    if (qs.length >= Math.min(3, n)) return dedupeBy(qs, (q) => q.q);
+    if (qs.length >= enough) return fit(qs);
     if (qs.length) {
       // Too few: one more attempt, then keep whichever set is larger.
       try {
         const retry = await attempt();
-        if (retry.length > qs.length) return dedupeBy(retry, (q) => q.q);
+        if (retry.length > qs.length) return fit(retry);
       } catch (e) {
         if (o.signal?.aborted) throw e;
       }
-      return dedupeBy(qs, (q) => q.q);
+      return fit(qs);
     }
     throw new LLMError("The model didn't write any usable quiz questions from these notes. Try again, or pick a different model in Settings.");
   }
 
+  // Offline engine: honours the count (when the notes are long enough) but cannot follow free-text instructions.
+  const want = o.count ? Math.max(1, Math.min(o.count, notesCapacity(source).questions)) : count;
   const kw = topKeywords(source, 40);
   const out: QuizQ[] = [];
-  topSentences(source, Math.max(15, count * 2)).forEach((sent, i) => {
+  topSentences(source, Math.max(15, want * 2)).forEach((sent, i) => {
     const term = kw.find((k) => new RegExp(`\\b${k}\\b`, "i").test(sent));
     if (!term || avoid.includes(sent)) return;
     const kind = i % 3;
@@ -248,7 +289,7 @@ Return only JSON: {"questions":[{"kind":"mc","q":string,"options":[4 strings],"a
     } else if (kind === 1) out.push({ id: uid(), kind: "cloze", q: mask(sent, term), answer: term });
     else out.push({ id: uid(), kind: "open", q: `Explain in your own words: "${sent.slice(0, 140)}${sent.length > 140 ? "…" : ""}"`, reference: sent });
   });
-  return out.slice(0, count);
+  return out.slice(0, want);
 }
 
 export async function gradeOpen(s: Settings, q: string, reference: string, answer: string, o: Opt = {}) {

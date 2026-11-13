@@ -1,28 +1,32 @@
-/* TurboGoo: "field notebook" design.
-   Palette generated with Huemint (huemint.com, transformer mode) from a paper + ink seed;
-   every text/background pair below was checked to WCAG AA (4.5:1+). */
+/* TurboGoo design system: warm-black surfaces, violet accent, chunky buttons.
+   Colours were sampled from the reference screenshots (page #141414 family, cards a touch warmer, accent #9474f4);
+   the button fill is deepened to #7f58ea so white text keeps AA contrast (4.68:1; the raw accent gives 3.46:1).
+   Dark is the default theme; [data-theme="light"] below is the light variant. */
 :root {
-  --bg: #f3eee3; --panel: #fbf8f1; --panel2: #ebe4d4; --ink: #1c1b18; --muted: #5e5a50; --line: #d9d0bd;
-  --brand: #3b5741; --brand-ink: #f3eee3; --hl: #d4aa57; --clay: #9a5a39;
-  --ok: #4f6e35; --bad: #a63f2c; --bad-ink: #fff; --warn: #82621a;
-  --hard: 3px 3px 0 var(--ink); --on-hl: #1c1b18; --sel: 55%; --mark: 70%;
-  --r: 10px; --r-sm: 6px;
-  --f-display: "Fraunces Variable", Georgia, "Times New Roman", serif;
-  --f-body: "Instrument Sans Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --bg: #161514; --panel: #211f1d; --panel2: #2b2826; --panel3: #35312e;
+  --ink: #f4f1ec; --muted: #a3a09a; --line: #3a3633;
+  --brand: #7f58ea; --brand-edge: #5d3bc4; --brand-ink: #ffffff; --brand-soft: rgb(127 88 234 / .16);
+  --link: #b6a0ff; --hl: #9474f4; --clay: #f0a070;
+  --ok: #5fd08f; --bad: #ff7a7a; --bad-ink: #1a0f0f; --warn: #f0c05a;
+  --hard: 0 0 0 transparent; --on-hl: #ffffff; --sel: 38%; --mark: 0%; --shadow-c: #000; --ruled: 9%;
+  --r: 18px; --r-sm: 12px;
+  --f-display: "Plus Jakarta Sans Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-body: "Plus Jakarta Sans Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
   --f-mono: "JetBrains Mono Variable", ui-monospace, Consolas, monospace;
-  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  --grain: none;
   font-family: var(--f-body);
   color: var(--ink);
-  color-scheme: light;
-}
-:root[data-theme="dark"] {
-  --bg: #171a16; --panel: #1e221d; --panel2: #262b25; --ink: #ece6d6; --muted: #a8a395; --line: #353b33;
-  --brand: #789d79; --brand-ink: #171a16; --hl: #d4aa57; --clay: #d4805a;
-  --ok: #8fb36f; --bad: #ea6e50; --bad-ink: #171a16; --warn: #d4aa57;
-  --hard: 3px 3px 0 #000; --sel: 40%; --mark: 40%; --shadow-c: #000; --ruled: 9%;
   color-scheme: dark;
 }
-
+:root[data-theme="light"] {
+  --bg: #faf8f5; --panel: #ffffff; --panel2: #f1eee9; --panel3: #e7e3dc;
+  --ink: #1d1a17; --muted: #615d57; --line: #e0dbd3;
+  --brand: #6f4fe0; --brand-edge: #5238b8; --brand-ink: #ffffff; --brand-soft: rgb(111 79 224 / .10);
+  --link: #5b3fd0; --hl: #7a5af0; --clay: #b0562a;
+  --ok: #1f7a45; --bad: #c0392b; --bad-ink: #ffffff; --warn: #8a6410;
+  --hard: 0 0 0 transparent; --on-hl: #ffffff; --sel: 30%; --mark: 0%; --shadow-c: #7a6f60; --ruled: 22%;
+  color-scheme: light;
+}
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 body { margin: 0; background: var(--bg) var(--grain); line-height: 1.55; -webkit-font-smoothing: antialiased; font-size: 15px; }

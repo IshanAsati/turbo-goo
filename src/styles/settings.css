@@ -1,0 +1,76 @@
+/* Settings: rounded section cards, a left-aligned form layout and a sticky section index on wide screens. */
+
+.se { display: grid; grid-template-columns: 196px minmax(0, 860px); justify-content: center; gap: 44px; padding: 40px 28px 110px; width: 100%; }
+.se-main { min-width: 0; display: grid; gap: 22px; align-content: start; }
+.se-head h1 { display: block; font-size: 36px; margin: 0 0 6px; }
+.se-head p { margin: 0; font-size: 16px; }
+
+.se-index { position: sticky; top: 92px; align-self: start; display: grid; gap: 2px; padding-top: 8px; }
+.se-index button { justify-content: flex-start; gap: 10px; width: 100%; padding: 9px 12px; border: 0; background: none; border-radius: 12px; color: var(--muted); font-size: 14px; font-weight: 600; text-align: left; }
+.se-index button:hover:not(:disabled) { background: var(--panel); color: var(--ink); border-color: transparent; }
+.se-index button.on { background: var(--brand-soft); color: var(--link); }
+
+.se-card { scroll-margin-top: 92px; background: var(--panel); border: 1.5px solid var(--line); border-radius: var(--r); padding: 26px 28px 28px; }
+.se-card-head { display: flex; gap: 16px; align-items: flex-start; margin-bottom: 18px; }
+.se-ico { flex: none; width: 42px; height: 42px; border-radius: 13px; display: grid; place-items: center; background: var(--brand-soft); color: var(--link); }
+.se-card-head h2 { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin: 0; font-size: 20px; line-height: 1.3; }
+.se-tag { font-family: var(--f-body); font-size: 13px; font-weight: 600; letter-spacing: 0; color: var(--muted); }
+.se-desc { margin: 6px 0 0; color: var(--muted); font-size: 14px; line-height: 1.6; max-width: 66ch; }
+.se-body { display: grid; gap: 4px; }
+.se-body > * { margin-top: 0; margin-bottom: 0; }
+
+.se ::placeholder { color: var(--muted); opacity: 1; }
+.se label { margin: 14px 0 0; font-size: 13.5px; font-weight: 700; color: var(--ink); }
+.se label small { font-weight: 500; color: var(--muted); }
+.se input, .se select { padding: 11px 14px; font-size: 14.5px; border-radius: 12px; }
+.se label > input, .se label > select, .se label > .input-row { margin-top: 7px; font-weight: 400; }
+.se select { width: 100%; }
+.se .input-row { gap: 6px; }
+.se .two { gap: 0 16px; }
+.se .field { margin: 18px 0 0; }
+.se .field-label { color: var(--ink); font-weight: 700; margin-bottom: 8px; }
+.se .row { margin: 18px 0 0; gap: 10px; }
+.se .chips { margin: 4px 0 6px; gap: 8px; }
+.se .chip { padding: 7px 16px; font-size: 14px; }
+.se .chip:hover:not(.on) { background: var(--panel2); }
+.se p.small { margin: 10px 0 0; }
+.se .callout { margin-top: 16px; border-radius: 14px; border: 1.5px solid var(--line); border-left-width: 1.5px; background: var(--panel2); }
+.se .callout.ok { border-color: color-mix(in srgb, var(--ok) 55%, var(--line)); background: color-mix(in srgb, var(--ok) 9%, var(--panel)); }
+.se .callout.warn { border-color: color-mix(in srgb, var(--warn) 55%, var(--line)); background: color-mix(in srgb, var(--warn) 9%, var(--panel)); }
+.se .callout.ok svg { color: var(--ok); }
+.se .steps li::marker { color: var(--link); }
+.se .callout code { background: var(--panel3); }
+
+.se .pick-list { margin-top: 14px; border: 1.5px solid var(--line); border-radius: 14px; background: var(--panel2); max-height: 320px; }
+.se .pick-list li { border-bottom: 1px solid var(--line); }
+.se .model-list li { padding: 8px 12px; }
+.se .model-list li .mono { font-size: 13px; color: var(--ink); }
+.se .model-list button { padding: 4px 14px; border-radius: 999px; font-size: 12.5px; }
+.se .model-list button.on { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+
+.se-themes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; max-width: 520px; }
+.se-theme { flex-direction: column; gap: 8px; padding: 18px 10px; border-radius: 16px; border: 2px solid var(--line); background: var(--panel2); color: var(--muted); font-size: 14px; font-weight: 700; }
+.se-theme:hover:not(:disabled) { border-color: color-mix(in srgb, var(--brand) 55%, var(--line)); }
+.se-theme.on { border-color: var(--brand); background: color-mix(in srgb, var(--brand) 16%, var(--panel)); color: var(--link); }
+
+.se-danger { display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap; margin-top: 22px; padding: 16px 18px; border: 1.5px solid color-mix(in srgb, var(--bad) 40%, var(--line)); border-radius: 14px; background: color-mix(in srgb, var(--bad) 6%, var(--panel)); }
+.se-danger p { margin: 2px 0 0; }
+.se-danger button.danger { border-color: color-mix(in srgb, var(--bad) 55%, var(--line)); }
+
+.se .table-wrap { margin-top: 4px; border: 1.5px solid var(--line); border-radius: 14px; background: var(--panel2); }
+.se .stats-table th, .se .stats-table td { padding: 9px 12px; }
+.se .stats-table td { border-bottom-color: var(--line); }
+.se .stats-table tr:last-child td { border-bottom: 0; }
+
+@media (max-width: 1180px) {
+  .se { grid-template-columns: minmax(0, 860px); gap: 0; }
+  .se-index { display: none; }
+}
+@media (max-width: 640px) {
+  .se { padding: 24px 14px 100px; }
+  .se-head h1 { font-size: 30px; }
+  .se-card { padding: 20px 18px 22px; }
+  .se-card-head { gap: 12px; }
+  .se .two { grid-template-columns: 1fr; }
+  .se-themes { gap: 8px; }
+}

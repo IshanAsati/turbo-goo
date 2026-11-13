@@ -237,7 +237,7 @@ export function Recorder({ onDone, busy }: { onDone: (title: string, transcript:
     }
   }
   async function finishInner() {
-    setWorking("Saving recordingâ€¦");
+    setWorking("Saving recording…");
     const rec = mr.current;
     if (rec && rec.state !== "inactive") {
       await new Promise<void>((res) => {
@@ -255,7 +255,7 @@ export function Recorder({ onDone, busy }: { onDone: (title: string, transcript:
     let transcript = textRef.current.trim();
     try {
       if (transcript.length < 40 && audio && hasSTT(getState().settings)) {
-        setWorking("Transcribing audioâ€¦");
+        setWorking("Transcribing audio…");
         transcript = (await transcribe(getState().settings, audio, "lecture.webm")).trim();
       }
     } catch (e) {
@@ -316,7 +316,7 @@ export function Recorder({ onDone, busy }: { onDone: (title: string, transcript:
           <>
             <button className="rec-btn live" onClick={finish}><Square size={20} fill="currentColor" /> Stop</button>
             <button onClick={pause}><Pause size={16} /> Pause</button>
-            <button onClick={flag} title="Mark a moment you didn't understand"><Flag size={16} /> Flag â€œ?â€</button>
+            <button onClick={flag} title="Mark a moment you didn't understand"><Flag size={16} /> Flag “?”</button>
           </>
         )}
         {phase === "paused" && (
@@ -335,7 +335,7 @@ export function Recorder({ onDone, busy }: { onDone: (title: string, transcript:
       {err && <div className="callout warn"><TriangleAlert size={18} /><div>{err}</div></div>}
       <textarea rows={10} aria-label="Transcript" placeholder="Live transcript appears here. You can edit it any time." value={text + (interim ? (text && !text.endsWith(" ") ? " " : "") + interim : "")} onChange={(e) => (setText(e.target.value), setInterim(""))} />
       <p className="muted small">
-        Saved to your device every few seconds, so a crash or closed tab won't lose the lecture. In class, just flag confusing moments with â€œ?â€ and ask about them afterwards.
+        Saved to your device every few seconds, so a crash or closed tab won't lose the lecture. In class, just flag confusing moments with “?” and ask about them afterwards.
         {Ctor && " Live transcription in Chrome/Edge is processed by the browser vendor's speech service."}
       </p>
       <button
@@ -343,7 +343,7 @@ export function Recorder({ onDone, busy }: { onDone: (title: string, transcript:
         disabled={busyNow || phase !== "idle" || (text.trim().length < 40 && !recoveredAudio)}
         onClick={() => complete(recoveredAudio ?? (blobs.current[0] && new Blob(blobs.current, { type: blobs.current[0].type })))}
       >
-        {working || (busy ? "Startingâ€¦" : "Generate study materials")}
+        {working || (busy ? "Starting…" : "Generate study materials")}
       </button>
     </>
   );

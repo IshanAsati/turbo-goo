@@ -1,11 +1,12 @@
-import { useRef, useState, useSyncExternalStore } from "react";
-import { Activity, AudioLines, CheckCircle2, Download, Eye, EyeOff, GraduationCap, Plug, Upload, Volume2 } from "lucide-react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Activity, AudioLines, CheckCircle2, Database, Download, Eye, EyeOff, GraduationCap, Monitor, Moon, Palette as PaletteIcon, Plug, Sun, Upload, Volume2 } from "lucide-react";
 import { PRESETS, STT_PRESETS, TTS_PRESETS, getStats, hasLLM, hasSTT, hasTTS, isLocalUrl, listVoices, probeModels, subscribeStats, testConnection, testSTT, testTTS } from "../lib/llm";
 import { setSettings, setState, uid, useStore } from "../lib/store";
 import { confirmDialog, toast } from "../components/feedback";
 import { ankiTsv, download } from "./Flashcards";
 import type { ProbeResult } from "../lib/llm";
 import type { Doc, Settings, Thread } from "../lib/types";
+import "../styles/settings.css";
 
 type Result = { ok: boolean; msg: string } | null;
 
@@ -38,7 +39,7 @@ function KeyInput({ value, onChange, placeholder = "sk-…" }: { value: string; 
 
 const ResultBox = ({ r }: { r: Result }) =>
   r && (
-    <div className={"callout " + (r.ok ? "ok" : "warn")}>
+    <div className={"callout " + (r.ok ? "ok" : "warn")} role="status">
       {r.ok && <CheckCircle2 size={18} />}
       <div>{r.msg}</div>
     </div>
@@ -51,6 +52,66 @@ const REASONING: { id: Settings["reasoning"]; label: string }[] = [
   { id: "medium", label: "Medium" },
   { id: "high", label: "High" },
 ];
+
+const SECTIONS = [
+  { id: "focus", label: "Study focus", icon: GraduationCap },
+  { id: "ai", label: "AI provider", icon: Plug },
+  { id: "stt", label: "Speech-to-text", icon: AudioLines },
+  { id: "tts", label: "Text-to-speech", icon: Volume2 },
+  { id: "requests", label: "Recent requests", icon: Activity },
+  { id: "appearance", label: "Appearance", icon: PaletteIcon },
+  { id: "data", label: "Your data", icon: Database },
+] as const;
+type SectionId = (typeof SECTIONS)[number]["id"];
+
+/** A rounded settings section with an icon, title, optional tag and a one-paragraph description. */
+function Section({ id, tag, desc, children }: { id: SectionId; tag?: string; desc?: React.ReactNode; children: React.ReactNode }) {
+  const s = SECTIONS.find((x) => x.id === id)!;
+  const Icon = s.icon;
+  return (
+    <section id={`se-${id}`} className="se-card" aria-labelledby={`se-h-${id}`}>
+      <header className="se-card-head">
+        <span className="se-ico" aria-hidden><Icon size={20} /></span>
+        <div>
+          <h2 id={`se-h-${id}`}>{s.label}{tag && <span className="se-tag">{tag}</span>}</h2>
+          {desc && <p className="se-desc">{desc}</p>}
+        </div>
+      </header>
+      <div className="se-body">{children}</div>
+    </section>
+  );
+}
+
+/** Sticky section index (wide screens). Highlights the section nearest the top of the viewport. */
+function SectionIndex() {
+  const [active, setActive] = useState<SectionId>("focus");
+  useEffect(() => {
+    const els = SECTIONS.map((s) => document.getElementById(`se-${s.id}`)).filter((e): e is HTMLElement => !!e);
+    const io = new IntersectionObserver(
+      (entries) => {
+        const top = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+        if (top) setActive(top.target.id.slice(3) as SectionId);
+      },
+      { rootMargin: "-90px 0px -65% 0px" },
+    );
+    els.forEach((e) => io.observe(e));
+    return () => io.disconnect();
+  }, []);
+  return (
+    <nav className="se-index" aria-label="Settings sections">
+      {SECTIONS.map(({ id, label, icon: Icon }) => (
+        <button
+          key={id}
+          className={active === id ? "on" : ""}
+          aria-current={active === id ? "true" : undefined}
+          onClick={() => (setActive(id), document.getElementById(`se-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }))}
+        >
+          <Icon size={16} /> {label}
+        </button>
+      ))}
+    </nav>
+  );
+}
 
 export function SettingsView() {
   const { settings: s, docs, threads } = useStore();
@@ -77,118 +138,123 @@ export function SettingsView() {
   }
 
   return (
-    <div className="page narrow settings">
-      <p className="eyebrow">Settings</p>
-      <h1 className="display">Set it up once.</h1>
+    <div className="se">
+      <SectionIndex />
+      <div className="se-main">
+        <header className="se-head">
+          <h1>Settings</h1>
+          <p className="muted">Set it up once. Everything is saved on this device.</p>
+        </header>
 
-      <section className="panel">
-        <h2><GraduationCap size={17} /> Study focus</h2>
-        <p className="muted small">
-          Tunes how notes, flashcards, quizzes, courses and chat are written. With CBSE Class 10 on, every prompt uses NCERT terminology and board-paper style, plus subject-specific rules for Maths, Science, Social Science, English, Hindi and IT. The subject is picked on the home screen, or detected from your material.
-        </p>
-        <div className="seg" role="radiogroup" aria-label="Study focus">
-          {([["cbse10", "CBSE Class 10"], ["general", "General"]] as const).map(([id, label]) => (
-            <button key={id} role="radio" aria-checked={s.curriculum === id} className={s.curriculum === id ? "on" : ""} onClick={() => setSettings({ curriculum: id })}>{label}</button>
-          ))}
-        </div>
-      </section>
-
-      <section className="panel">
-        <h2><Plug size={17} /> AI provider</h2>
-        <p className="muted small">
-          Works offline with a basic built-in engine. Connect any OpenAI-compatible provider for real notes, quizzes, courses and chat.
-          Your key stays on this device and is sent only to the Base URL below.
-        </p>
-        <div className="chips">
-          {PRESETS.map((p) => (
-            <button key={p.name} className={"chip" + (s.baseUrl === p.baseUrl ? " on" : "")} title={p.note} onClick={() => setSettings({ baseUrl: p.baseUrl, model: p.model, fastModel: p.fast, reasoning: p.reasoning })}>
-              {p.name}
-            </button>
-          ))}
-        </div>
-        <label>Base URL<input value={s.baseUrl} onChange={(e) => setSettings({ baseUrl: e.target.value })} /></label>
-        <label>API key<KeyInput value={s.apiKey} onChange={(v) => setSettings({ apiKey: v })} /></label>
-        <div className="two">
-          <label>Smart model <small className="muted">notes, chat, courses</small><input value={s.model} onChange={(e) => setSettings({ model: e.target.value })} /></label>
-          <label>Fast model <small className="muted">cards, quizzes, grading</small><input value={s.fastModel} onChange={(e) => setSettings({ fastModel: e.target.value })} /></label>
-        </div>
-        <ModelFinder />
-        <div className="field">
-          <span className="field-label">Thinking before answering <small className="muted">for reasoning models</small></span>
-          <div className="seg" role="radiogroup" aria-label="Reasoning effort">
-            {REASONING.map((r) => (
-              <button key={r.id} role="radio" aria-checked={s.reasoning === r.id} className={s.reasoning === r.id ? "on" : ""} onClick={() => setSettings({ reasoning: r.id })}>{r.label}</button>
+        <Section
+          id="focus"
+          desc="Tunes how notes, flashcards, quizzes, courses and chat are written. With CBSE Class 10 on, every prompt uses NCERT terminology and board-paper style, plus subject-specific rules for Maths, Science, Social Science, English, Hindi and IT. The subject is picked on the home screen, or detected from your material."
+        >
+          <div className="chips" role="radiogroup" aria-label="Study focus">
+            {([["cbse10", "CBSE Class 10"], ["general", "General"]] as const).map(([id, label]) => (
+              <button key={id} role="radio" aria-checked={s.curriculum === id} className={"chip" + (s.curriculum === id ? " on" : "")} onClick={() => setSettings({ curriculum: id })}>{label}</button>
             ))}
           </div>
-          <p className="muted small">Reasoning models write hidden “thinking” tokens before the first visible word. Low is the fastest that still writes good notes. Providers that don't support this ignore it.</p>
-        </div>
-        <div className="row">
-          <button className="primary" onClick={ai.run} disabled={ai.busy || !hasLLM(s)}>{ai.busy ? "Testing…" : "Test connection"}</button>
-          <span className="small muted">{hasLLM(s) ? "AI mode" : "Offline mode (no key set)"}</span>
-        </div>
-        <ResultBox r={ai.result} />
-      </section>
+        </Section>
 
-      <section className="panel">
-        <h2><AudioLines size={17} /> Speech-to-text</h2>
-        <p className="muted small">
-          Transcribes uploaded audio/video and recordings that the live transcript missed. Many chat providers (including AI Gateway and NVIDIA NIM here) don't offer Whisper, so you can use a separate one.
-        </p>
-        <div className="chips">
-          {STT_PRESETS.map((p) => (
-            <button key={p.name} className={"chip" + (s.sttBaseUrl === p.baseUrl ? " on" : "")} title={p.note} onClick={() => setSettings({ sttBaseUrl: p.baseUrl, sttModel: p.model })}>
-              {p.name}
+        <Section
+          id="ai"
+          desc="Works offline with a basic built-in engine. Connect any OpenAI-compatible provider for real notes, quizzes, courses and chat. Your key stays on this device and is sent only to the Base URL below."
+        >
+          <div className="chips">
+            {PRESETS.map((p) => (
+              <button key={p.name} className={"chip" + (s.baseUrl === p.baseUrl ? " on" : "")} title={p.note} onClick={() => setSettings({ baseUrl: p.baseUrl, model: p.model, fastModel: p.fast, reasoning: p.reasoning })}>
+                {p.name}
+              </button>
+            ))}
+          </div>
+          <label>Base URL<input value={s.baseUrl} onChange={(e) => setSettings({ baseUrl: e.target.value })} /></label>
+          <label>API key<KeyInput value={s.apiKey} onChange={(v) => setSettings({ apiKey: v })} /></label>
+          <div className="two">
+            <label>Smart model <small className="muted">notes, chat, courses</small><input value={s.model} onChange={(e) => setSettings({ model: e.target.value })} /></label>
+            <label>Fast model <small className="muted">cards, quizzes, grading</small><input value={s.fastModel} onChange={(e) => setSettings({ fastModel: e.target.value })} /></label>
+          </div>
+          <ModelFinder />
+          <div className="field">
+            <span className="field-label">Thinking before answering <small className="muted">for reasoning models</small></span>
+            <div className="chips" role="radiogroup" aria-label="Reasoning effort">
+              {REASONING.map((r) => (
+                <button key={r.id} role="radio" aria-checked={s.reasoning === r.id} className={"chip" + (s.reasoning === r.id ? " on" : "")} onClick={() => setSettings({ reasoning: r.id })}>{r.label}</button>
+              ))}
+            </div>
+            <p className="muted small">Reasoning models write hidden “thinking” tokens before the first visible word. Low is the fastest that still writes good notes. Providers that don't support this ignore it.</p>
+          </div>
+          <div className="row">
+            <button className="primary" onClick={ai.run} disabled={ai.busy || !hasLLM(s)}>{ai.busy ? "Testing…" : "Test connection"}</button>
+            <span className="small muted">{hasLLM(s) ? "AI mode" : "Offline mode (no key set)"}</span>
+          </div>
+          <ResultBox r={ai.result} />
+        </Section>
+
+        <Section
+          id="stt"
+          desc="Transcribes uploaded audio/video and recordings that the live transcript missed. Many chat providers (including AI Gateway and NVIDIA NIM here) don't offer Whisper, so you can use a separate one."
+        >
+          <div className="chips">
+            {STT_PRESETS.map((p) => (
+              <button key={p.name} className={"chip" + (s.sttBaseUrl === p.baseUrl ? " on" : "")} title={p.note} onClick={() => setSettings({ sttBaseUrl: p.baseUrl, sttModel: p.model })}>
+                {p.name}
+              </button>
+            ))}
+          </div>
+          {!sttShared && (
+            <>
+              <label>Base URL<input value={s.sttBaseUrl} onChange={(e) => setSettings({ sttBaseUrl: e.target.value })} /></label>
+              <label>API key<KeyInput value={s.sttApiKey} onChange={(v) => setSettings({ sttApiKey: v })} placeholder="Key for this speech provider" /></label>
+            </>
+          )}
+          <label>Model<input value={s.sttModel} onChange={(e) => setSettings({ sttModel: e.target.value })} /></label>
+          {sttShared && <p className="muted small">Using the AI provider's Base URL and key above.</p>}
+          <div className="row">
+            <button className="primary" onClick={stt.run} disabled={stt.busy || !hasSTT(s)}>{stt.busy ? "Testing…" : "Test speech-to-text"}</button>
+            <span className="small muted">{hasSTT(s) ? "Ready" : "Not set up"}</span>
+          </div>
+          <ResultBox r={stt.result} />
+        </Section>
+
+        <TextToSpeech />
+
+        <RecentRequests />
+
+        <Section id="appearance" desc="Dark is the default. System follows your device.">
+          <div className="se-themes" role="radiogroup" aria-label="Theme">
+            {([["dark", "Dark", Moon], ["light", "Light", Sun], ["system", "System", Monitor]] as const).map(([t, label, Icon]) => (
+              <button key={t} role="radio" aria-checked={s.theme === t} className={"se-theme" + (s.theme === t ? " on" : "")} onClick={() => setSettings({ theme: t })}>
+                <Icon size={20} />
+                <span>{label}</span>
+              </button>
+            ))}
+          </div>
+        </Section>
+
+        <Section id="data" desc="Everything lives on this device (IndexedDB). Nothing is uploaded except what you send to your AI providers. Back up regularly; clearing browser data deletes it.">
+          <div className="row">
+            <button onClick={() => download("turbogoo-backup.json", JSON.stringify({ version: 3, docs, threads }, null, 2), "application/json")}><Download size={15} /> Backup (JSON)</button>
+            <button onClick={() => importRef.current?.click()}><Upload size={15} /> Restore</button>
+            <input ref={importRef} hidden type="file" accept="application/json,.json" aria-label="Restore backup file" onChange={(e) => (importBackup(e.target.files?.[0]), (e.target.value = ""))} />
+            <button onClick={() => download("turbogoo-all-flashcards.txt", ankiTsv(docs.flatMap((d) => d.cards)))}><Download size={15} /> All flashcards for Anki</button>
+          </div>
+          <div className="se-danger">
+            <div>
+              <b>Delete everything</b>
+              <p className="muted small">Removes all {docs.length} documents and {threads.length} chats from this device. This can't be undone.</p>
+            </div>
+            <button
+              className="danger"
+              onClick={async () => {
+                if (await confirmDialog("Delete everything?", `All ${docs.length} documents, ${threads.length} chats, flashcards and recordings will be permanently removed from this device.`, "Delete everything", true)) setState((st) => ({ ...st, docs: [], threads: [] }));
+              }}
+            >
+              Delete all documents and chats
             </button>
-          ))}
-        </div>
-        {!sttShared && (
-          <>
-            <label>Base URL<input value={s.sttBaseUrl} onChange={(e) => setSettings({ sttBaseUrl: e.target.value })} /></label>
-            <label>API key<KeyInput value={s.sttApiKey} onChange={(v) => setSettings({ sttApiKey: v })} placeholder="Key for this speech provider" /></label>
-          </>
-        )}
-        <label>Model<input value={s.sttModel} onChange={(e) => setSettings({ sttModel: e.target.value })} /></label>
-        {sttShared && <p className="muted small">Using the AI provider's Base URL and key above.</p>}
-        <div className="row">
-          <button className="primary" onClick={stt.run} disabled={stt.busy || !hasSTT(s)}>{stt.busy ? "Testing…" : "Test speech-to-text"}</button>
-          <span className="small muted">{hasSTT(s) ? "Ready" : "Not set up"}</span>
-        </div>
-        <ResultBox r={stt.result} />
-      </section>
-
-      <TextToSpeech />
-
-      <RecentRequests />
-
-      <section className="panel">
-        <h2>Appearance</h2>
-        <div className="seg">
-          {(["system", "light", "dark"] as const).map((t) => (
-            <button key={t} className={s.theme === t ? "on" : ""} onClick={() => setSettings({ theme: t })}>{t[0].toUpperCase() + t.slice(1)}</button>
-          ))}
-        </div>
-      </section>
-
-      <section className="panel">
-        <h2>Your data</h2>
-        <p className="muted small">Everything lives on this device (IndexedDB). Nothing is uploaded except what you send to your AI providers. Back up regularly; clearing browser data deletes it.</p>
-        <div className="row">
-          <button onClick={() => download("turbogoo-backup.json", JSON.stringify({ version: 3, docs, threads }, null, 2), "application/json")}><Download size={15} /> Backup (JSON)</button>
-          <button onClick={() => importRef.current?.click()}><Upload size={15} /> Restore</button>
-          <input ref={importRef} hidden type="file" accept="application/json,.json" onChange={(e) => (importBackup(e.target.files?.[0]), (e.target.value = ""))} />
-          <button onClick={() => download("turbogoo-all-flashcards.txt", ankiTsv(docs.flatMap((d) => d.cards)))}><Download size={15} /> All flashcards for Anki</button>
-        </div>
-        <div className="row">
-          <button
-            className="danger"
-            onClick={async () => {
-              if (await confirmDialog("Delete everything?", `All ${docs.length} documents, ${threads.length} chats, flashcards and recordings will be permanently removed from this device.`, "Delete everything", true)) setState((st) => ({ ...st, docs: [], threads: [] }));
-            }}
-          >
-            Delete all documents and chats
-          </button>
-        </div>
-      </section>
+          </div>
+        </Section>
+      </div>
     </div>
   );
 }
@@ -217,7 +283,7 @@ function ModelFinder() {
       <div className="row">
         <button onClick={run} disabled={busy || !hasLLM(s)}>{busy ? `Testing models… ${progress[0]}/${progress[1]}` : "Find models that work on my account"}</button>
         {busy && <button onClick={() => ctl.current?.abort()}>Stop</button>}
-        {!busy && found && <span className="small muted">{found.length ? `${found.length} work with this key, fastest first` : "None answered. Check the key and Base URL."}</span>}
+        {!busy && found && <span className="small muted" role="status">{found.length ? `${found.length} work with this key, fastest first` : "None answered. Check the key and Base URL."}</span>}
       </div>
       {found && found.length > 0 && (
         <ul className="pick-list model-list">
@@ -225,8 +291,8 @@ function ModelFinder() {
             <li key={m.id}>
               <span className="mono">{m.id}</span>
               <small className="muted">{(m.ms / 1000).toFixed(1)} s</small>
-              <button className={s.model === m.id ? "on" : ""} onClick={() => setSettings({ model: m.id })}>Smart</button>
-              <button className={s.fastModel === m.id ? "on" : ""} onClick={() => setSettings({ fastModel: m.id })}>Fast</button>
+              <button className={s.model === m.id ? "on" : ""} aria-pressed={s.model === m.id} onClick={() => setSettings({ model: m.id })}>Smart</button>
+              <button className={s.fastModel === m.id ? "on" : ""} aria-pressed={s.fastModel === m.id} onClick={() => setSettings({ fastModel: m.id })}>Fast</button>
             </li>
           ))}
         </ul>
@@ -262,11 +328,7 @@ function TextToSpeech() {
     }
   }
   return (
-    <section className="panel">
-      <h2><Volume2 size={17} /> Text-to-speech <span className="tally">podcast voices</span></h2>
-      <p className="muted small">
-        Renders the two podcast hosts as real voices and makes the mp3 download. Without this, podcasts use your browser's built-in voices.
-      </p>
+    <Section id="tts" tag="podcast voices" desc="Renders the two podcast hosts as real voices and makes the mp3 download. Without this, podcasts use your browser's built-in voices.">
       <div className="chips">
         {TTS_PRESETS.map((p) => (
           <button key={p.name} className={"chip" + (s.ttsBaseUrl === p.baseUrl ? " on" : "")} title={p.note} onClick={() => (setVoices([]), setSettings({ ttsBaseUrl: p.baseUrl, ttsModel: p.model, ttsVoiceA: p.a, ttsVoiceB: p.b }))}>
@@ -306,7 +368,7 @@ function TextToSpeech() {
         <span className="small muted">{hasTTS(s) ? "Ready" : "Not set up"}</span>
       </div>
       <ResultBox r={tts.result} />
-    </section>
+    </Section>
   );
 }
 
@@ -315,8 +377,7 @@ function RecentRequests() {
   const stats = useSyncExternalStore(subscribeStats, getStats);
   const lastMin = stats.filter((r) => Date.now() - r.at < 60_000).length;
   return (
-    <section className="panel">
-      <h2><Activity size={17} /> Recent requests <span className="tally">{lastMin} in the last minute</span></h2>
+    <Section id="requests" tag={`${lastMin} in the last minute`}>
       {stats.length === 0 ? (
         <p className="muted small">Nothing yet this session. Generate something and the timings show up here (and in the developer console).</p>
       ) : (
@@ -347,6 +408,6 @@ function RecentRequests() {
         </div>
       )}
       <p className="muted small">“First word” is the wait before visible text: queueing on the provider plus hidden thinking. “Speed” is answer tokens per second after that.</p>
-    </section>
+    </Section>
   );
 }

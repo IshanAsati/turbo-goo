@@ -8,8 +8,10 @@ import { handOff, takeHandOff } from "../lib/handoff";
 import { addThread, deleteThread, updateThread, useStore } from "../lib/store";
 import type { ChatMsg, Thread } from "../lib/types";
 import { Markdown } from "../components/Markdown";
-import { AttachButton, AttachmentChips, useAttachments } from "../components/SourceTray";
+import { Mascot } from "../components/Mascot";
+import { AttachmentChips, SourcePills, useAttachments } from "../components/SourceTray";
 import { confirmDialog, toast } from "../components/feedback";
+import "../styles/chat-page.css";
 
 const ago = (t: number) => {
   const m = Math.round((Date.now() - t) / 6e4);
@@ -127,13 +129,13 @@ function Conversation({ thread }: { thread?: Thread }) {
     >
       <header className="convo-head">
         <h1 className="convo-title">{thread?.title ?? "New conversation"}</h1>
-        {api.atts.length > 0 && <button className="ghost-btn" onClick={makeStudySet}>Turn sources into a study set</button>}
+        {api.atts.length > 0 && <button className="make-set" onClick={makeStudySet}>Turn sources into a study set</button>}
       </header>
 
       <div className="msgs" aria-live="polite">
         {msgs.length === 0 && live === null && (
           <div className="chat-empty">
-            <p className="eyebrow">Chat</p>
+            <Mascot size={88} mood="thinking" />
             <h2 className="display">{api.atts.length ? `Ask across ${api.atts.length} source${api.atts.length > 1 ? "s" : ""}.` : "Ask anything. Attach as many sources as you like."}</h2>
             <p className="muted">Answers cite the attached files, links and library docs by number. Drop files anywhere on this page to attach them.</p>
             <div className="suggest">
@@ -146,8 +148,7 @@ function Conversation({ thread }: { thread?: Thread }) {
         <div ref={end} />
       </div>
 
-      <div className="composer-box">
-        <AttachmentChips api={api} compact />
+      <div className="composer-card chat-composer">
         <textarea
           aria-label="Message"
           rows={Math.min(8, Math.max(2, input.split("\n").length))}
@@ -162,15 +163,17 @@ function Conversation({ thread }: { thread?: Thread }) {
             if (e.key === "Enter" && !e.shiftKey) (e.preventDefault(), void send());
           }}
         />
-        <div className="composer-foot">
-          <AttachButton api={api} />
-          <span className="spacer" />
-          <span className="muted small hide-sm">Enter to send · Shift+Enter for a new line</span>
-          {live !== null ? (
-            <button className="send" aria-label="Stop" onClick={() => ctl.current?.abort()}><Square size={14} fill="currentColor" /></button>
-          ) : (
-            <button className="send primary" aria-label="Send" disabled={!input.trim() || !!api.busy} onClick={() => send()}><ArrowUp size={17} /></button>
-          )}
+        <AttachmentChips api={api} compact />
+        <div className="cc-row">
+          <div className="cc-left"><SourcePills api={api} menuDir="up" /></div>
+          <div className="cc-right">
+            <span className="cc-hint hide-sm">Enter to send · Shift+Enter for a new line</span>
+            {live !== null ? (
+              <button className="send-btn stop" aria-label="Stop" title="Stop" onClick={() => ctl.current?.abort()}><Square size={15} fill="currentColor" aria-hidden /></button>
+            ) : (
+              <button className="primary send-btn" aria-label="Send" title="Send" disabled={!input.trim() || !!api.busy} onClick={() => send()}><ArrowUp size={20} strokeWidth={2.4} aria-hidden /></button>
+            )}
+          </div>
         </div>
       </div>
     </section>

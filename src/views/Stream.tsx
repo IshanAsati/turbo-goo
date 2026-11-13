@@ -1,12 +1,14 @@
 import { useMemo, useState } from "react";
-import { BookOpen, Coffee, Pause, Play, RotateCcw, Shuffle, Timer } from "lucide-react";
+import { BookOpen, Check, Coffee, Pause, Play, RotateCcw, Shuffle, Timer, X } from "lucide-react";
 import { go } from "../lib/nav";
 import { isDue, review } from "../lib/srs";
 import { recordActivity, updateDoc, useStore } from "../lib/store";
 import { shuffle } from "../lib/text";
 import type { Card, QuizQ } from "../lib/types";
 import { Markdown } from "../components/Markdown";
+import { FlipCard } from "../components/ReviewDeck";
 import { usePomodoro } from "./pomodoro";
+import "../styles/study.css";
 
 type Item =
   | { t: "card"; docId: string; title: string; card: Card }
@@ -44,21 +46,25 @@ export function Stream() {
   }, [docs.length, seed]);
 
   return (
-    <div className="page narrow">
-      <div className="toolbar-row">
-        <h1>Study Stream</h1>
-        <span className="spacer" />
-        <div className={"pomo" + (pomo.mode === "break" ? " break" : "")} role="timer" aria-label="Pomodoro timer">
-          {pomo.mode === "break" ? <Coffee size={16} /> : <Timer size={16} />}
-          <b>{pomo.label}</b>
-          <button className="icon-btn" aria-label={pomo.running ? "Pause timer" : "Start timer"} onClick={pomo.toggle}>{pomo.running ? <Pause size={15} /> : <Play size={15} />}</button>
-          <button className="icon-btn" aria-label="Reset timer" onClick={pomo.reset}><RotateCcw size={14} /></button>
+    <div className="st-page sf">
+      <header className="st-head sf-head">
+        <div>
+          <h1>Study Stream</h1>
+          <p className="muted">An endless mix of due flashcards, quick questions and snippets from everything you've studied. Scroll to keep going.</p>
         </div>
-        <button onClick={() => setSeed(seed + 1)}><Shuffle size={15} /> Shuffle</button>
-      </div>
-      <p className="muted">An endless mix of due flashcards, quick questions and snippets from everything you've studied. Scroll to keep going.</p>
-      {items.length === 0 && <p className="muted">Nothing to stream yet. Create a document first.</p>}
-      <div className="feed">
+        <div className="sf-tools">
+          <div className={"sf-pomo" + (pomo.mode === "break" ? " break" : "")} role="timer" aria-label={`Pomodoro timer, ${pomo.mode === "break" ? "break" : "focus"}`}>
+            {pomo.mode === "break" ? <Coffee size={16} /> : <Timer size={16} />}
+            <b>{pomo.label}</b>
+            <span className="sf-pomo-mode">{pomo.mode === "break" ? "Break" : "Focus"}</span>
+            <button className="icon-btn" aria-label={pomo.running ? "Pause timer" : "Start timer"} onClick={pomo.toggle}>{pomo.running ? <Pause size={15} /> : <Play size={15} />}</button>
+            <button className="icon-btn" aria-label="Reset timer" onClick={pomo.reset}><RotateCcw size={14} /></button>
+          </div>
+          <button onClick={() => setSeed(seed + 1)}><Shuffle size={15} /> Shuffle</button>
+        </div>
+      </header>
+      {items.length === 0 && <p className="sf-empty muted">Nothing to stream yet. Create a lesson first.</p>}
+      <div className="sf-feed">
         {items.map((it, i) => (
           <StreamCard key={`${seed}-${i}`} item={it} />
         ))}
@@ -73,14 +79,14 @@ function StreamCard({ item }: { item: Item }) {
   const [gone, setGone] = useState(false);
   if (gone) return null;
   const head = (
-    <button className="link small stream-src" onClick={() => go(`/doc/${item.docId}`)}>
+    <button className="link sf-src" onClick={() => go(`/doc/${item.docId}`)}>
       <BookOpen size={13} /> {item.title}
     </button>
   );
 
   if (item.t === "note")
     return (
-      <section className="stream-item note">
+      <section className="sf-item note">
         {head}
         <Markdown text={item.text} />
       </section>
@@ -88,31 +94,35 @@ function StreamCard({ item }: { item: Item }) {
 
   if (item.t === "mc")
     return (
-      <section className="stream-item">
+      <section className="sf-item">
         {head}
-        <Markdown text={item.q.q} className="qtext" />
-        <div className="options">
-          {item.q.options.map((o, k) => (
-            <button key={k} disabled={pick !== null} className={"option" + (pick !== null && k === item.q.answer ? " right" : "") + (pick === k && k !== item.q.answer ? " wrong" : "")} onClick={() => (setPick(k), recordActivity())}>
-              <Markdown text={o} />
-            </button>
-          ))}
+        <Markdown text={item.q.q} className="qz-q" />
+        <div className="qz-options">
+          {item.q.options.map((o, k) => {
+            const right = pick !== null && k === item.q.answer;
+            const wrong = pick === k && k !== item.q.answer;
+            return (
+              <button key={k} disabled={pick !== null} className={"qz-opt" + (right ? " right" : "") + (wrong ? " wrong" : "") + (pick !== null && !right && !wrong ? " dim" : "")} onClick={() => (setPick(k), recordActivity())}>
+                <span className="qz-badge" aria-hidden>{right ? <Check size={16} strokeWidth={3} /> : wrong ? <X size={16} strokeWidth={3} /> : "ABCD"[k]}</span>
+                <span className="qz-opt-text"><Markdown text={o} /></span>
+                {right && <span className="qz-flag">Correct answer</span>}
+                {wrong && <span className="qz-flag">Your answer</span>}
+              </button>
+            );
+          })}
         </div>
         {pick !== null && <Markdown text={item.q.explanation} className="muted small" />}
       </section>
     );
 
   return (
-    <section className="stream-item">
+    <section className="sf-item">
       {head}
-      <button className={"flash small-flash" + (flip ? " flipped" : "")} onClick={() => setFlip(!flip)}>
-        <span className="face front"><Markdown text={item.card.front} /></span>
-        <span className="face back"><Markdown text={item.card.back} /></span>
-      </button>
+      <FlipCard compact front={item.card.front} back={item.card.back} flipped={flip} onFlip={() => setFlip(!flip)} />
       {flip && (
-        <div className="grades">
-          {([["Again", 1], ["Good", 4], ["Easy", 5]] as const).map(([label, g]) => (
-            <button key={label} className={"grade " + label.toLowerCase()} onClick={() => {
+        <div className="rv-grades three">
+          {([["Again", 1, "again"], ["Good", 4, "good"], ["Easy", 5, "easy"]] as const).map(([label, g, cls]) => (
+            <button key={label} className={"rv-grade " + cls} onClick={() => {
               recordActivity();
               updateDoc(item.docId, (d) => ({ cards: d.cards.map((c) => (c.id === item.card.id ? review(c, g) : c)) }));
               setGone(true);

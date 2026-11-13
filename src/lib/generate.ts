@@ -5,8 +5,8 @@ import type { Doc, DocKind, Section, Subject } from "./types";
 
 /**
  * Background generation. The UI navigates to the document immediately and watches the job.
- * Notes are written from the source first. Flashcards and the quiz are then written from the notes only,
- * which keeps those prompts short.
+ * Notes are written from the source automatically. Flashcards and quizzes are written only when the student asks
+ * (generateCards / generateQuiz), from the notes alone, which keeps those prompts short.
  */
 
 const controllers = new Map<string, AbortController>();
@@ -42,56 +42,46 @@ export function createDoc(o: NewDoc): string {
   return d.id;
 }
 
-/** Fill in whatever the document is still missing (notes, then cards and quiz from the notes). Safe to call again to retry. */
+/**
+ * Write the notes for a document that has a source but no notes yet. Safe to call again to retry.
+ * Flashcards and quizzes are NOT written here any more: the student asks for them from the Flashcards and Quiz
+ * screens (see generateCards / generateQuiz), choosing how many and what to focus on.
+ */
 export async function generateMissing(id: string) {
-  const signal = begin(id);
   const get = () => getState().docs.find((d) => d.id === id);
-  let d = get();
+  const d = get();
   if (!d) return;
+  subjectOf(d); // keep the subject stable even when there is nothing to write
+  if (d.notes.trim() || !d.source.trim()) return; // nothing to do: no job, no banner
+  const signal = begin(id);
   try {
     const subject = subjectOf(d);
-    if (!d.notes.trim() && d.source.trim()) {
-      let last = 0;
-      let thinking = false;
-      setJob(id, { step: "Writing your notes…" });
-      const final = await genNotes(
-        settings(),
-        d.title,
-        d.source,
-        d.kind,
-        (t) => {
-          if (Date.now() - last > 200) {
-            last = Date.now();
-            updateDoc(id, { notes: t });
-          }
+    let last = 0;
+    let thinking = false;
+    setJob(id, { step: "Writing your notes…" });
+    const final = await genNotes(
+      settings(),
+      d.title,
+      d.source,
+      d.kind,
+      (t) => {
+        if (Date.now() - last > 200) {
+          last = Date.now();
+          updateDoc(id, { notes: t });
+        }
+      },
+      {
+        signal,
+        subject,
+        onThinking: () => {
+          if (thinking) return;
+          thinking = true;
+          setJob(id, { step: "Model is thinking before it writes…" });
         },
-        {
-          signal,
-          subject,
-          onThinking: () => {
-            if (thinking) return;
-            thinking = true;
-            setJob(id, { step: "Model is thinking before it writes…" });
-          },
-        },
-      );
-      updateDoc(id, { notes: final });
-      if (signal.aborted) return;
-    }
-
-    d = get();
-    if (!d) return;
-    const needCards = d.cards.length === 0;
-    const needQuiz = d.quiz.length === 0;
-    if (needCards || needQuiz) {
-      if (!d.notes.trim()) throw new Error("There are no notes to build flashcards and a quiz from.");
-      setJob(id, { step: "Creating flashcards and a quiz from your notes…" });
-      const [cards, quiz] = await Promise.all([
-        needCards ? genCards(settings(), d.notes, { signal, subject }) : Promise.resolve(d.cards),
-        needQuiz ? genQuiz(settings(), d.notes, 10, [], { signal, subject }) : Promise.resolve(d.quiz),
-      ]);
-      updateDoc(id, { cards, quiz });
-    }
+      },
+    );
+    updateDoc(id, { notes: final });
+    if (signal.aborted) return;
 
     setJob(id, { step: "", done: true });
     setTimeout(() => setJob(id, null), 2500);
@@ -100,6 +90,49 @@ export async function generateMissing(id: string) {
     setJob(id, { step: "", error: msg(e) });
   } finally {
     if (controllers.get(id)?.signal === signal) controllers.delete(id);
+  }
+}
+
+/** What the student chose on the generator screen. */
+export type GenerateOpts = { count: number; instructions?: string };
+
+/** Write flashcards from the notes only and add them to the deck (skipping fronts already in it). Job key `${id}:cards`. */
+export async function generateCards(d: Doc, o: GenerateOpts) {
+  const key = `${d.id}:cards`;
+  const signal = begin(key);
+  setJob(key, { step: `Writing ${o.count} flashcards from your notes…` });
+  try {
+    const cur = getState().docs.find((x) => x.id === d.id) ?? d;
+    if (!cur.notes.trim()) throw new Error("There are no notes to build flashcards from yet.");
+    const cards = await genCards(settings(), cur.notes, { signal, subject: subjectOf(cur), count: o.count, instructions: o.instructions, avoid: cur.cards.map((c) => c.front) });
+    if (signal.aborted) return;
+    if (!cards.length) throw new Error("No new flashcards could be made from these notes. Try different instructions, or add more to your notes.");
+    updateDoc(d.id, (c) => ({ cards: [...c.cards, ...cards] }));
+    setJob(key, null);
+  } catch (e) {
+    if (!signal.aborted) setJob(key, { step: "", error: msg(e) });
+  } finally {
+    if (controllers.get(key)?.signal === signal) controllers.delete(key);
+  }
+}
+
+/** Write a quiz from the notes only and add it to the doc's questions (skipping repeats). Job key `${id}:quiz`. */
+export async function generateQuiz(d: Doc, o: GenerateOpts) {
+  const key = `${d.id}:quiz`;
+  const signal = begin(key);
+  setJob(key, { step: `Writing ${o.count} questions from your notes…` });
+  try {
+    const cur = getState().docs.find((x) => x.id === d.id) ?? d;
+    if (!cur.notes.trim()) throw new Error("There are no notes to write questions from yet.");
+    const qs = await genQuiz(settings(), cur.notes, o.count, cur.quiz.map((q) => q.q), { signal, subject: subjectOf(cur), count: o.count, instructions: o.instructions });
+    if (signal.aborted) return;
+    if (!qs.length) throw new Error("No new questions could be made from these notes. Try different instructions, or add more to your notes.");
+    updateDoc(d.id, (c) => ({ quiz: [...c.quiz, ...qs] }));
+    setJob(key, null);
+  } catch (e) {
+    if (!signal.aborted) setJob(key, { step: "", error: msg(e) });
+  } finally {
+    if (controllers.get(key)?.signal === signal) controllers.delete(key);
   }
 }
 
@@ -116,22 +149,26 @@ export async function generatePodcast(d: Doc) {
   }
 }
 
+/** Add more questions to an existing quiz (the "More questions" button). Resolves to the new questions. */
 export async function moreQuiz(d: Doc, count = 10) {
   const key = `${d.id}:quiz`;
   const signal = begin(key);
   setJob(key, { step: "Writing new questions from your notes…" });
   try {
-    if (!d.notes.trim()) throw new Error("There are no notes to write questions from.");
-    const extra = await genQuiz(settings(), d.notes, count, d.quiz.map((q) => q.q), { signal, subject: subjectOf(d) });
-    updateDoc(d.id, (cur) => ({ quiz: [...cur.quiz, ...extra] }));
+    const cur = getState().docs.find((x) => x.id === d.id) ?? d;
+    if (!cur.notes.trim()) throw new Error("There are no notes to write questions from.");
+    const extra = await genQuiz(settings(), cur.notes, count, cur.quiz.map((q) => q.q), { signal, subject: subjectOf(cur) });
+    if (signal.aborted) return [];
+    updateDoc(d.id, (c) => ({ quiz: [...c.quiz, ...extra] }));
     setJob(key, null);
     return extra;
   } catch (e) {
     if (!signal.aborted) setJob(key, { step: "", error: msg(e) });
     return [];
+  } finally {
+    if (controllers.get(key)?.signal === signal) controllers.delete(key);
   }
 }
-
 /* ------------------------------------------------------------------ */
 /* Courses: outline first, then one call per lesson (2 at a time).     */
 /* ------------------------------------------------------------------ */
@@ -315,7 +352,9 @@ export function createCourseDoc(o: NewDoc): string {
   return d.id;
 }
 
+/** Notes are rewritten from the source. Cards and the quiz are just cleared: their generator screen then asks what to write. */
 export function regenerate(d: Doc, what: "notes" | "cards" | "quiz") {
+  if (what !== "notes") cancelJob(`${d.id}:${what}`);
   updateDoc(d.id, what === "notes" ? { notes: "" } : what === "cards" ? { cards: [] } : { quiz: [] });
-  void generateMissing(d.id);
+  if (what === "notes") void generateMissing(d.id);
 }

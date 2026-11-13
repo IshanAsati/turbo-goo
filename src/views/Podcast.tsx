@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Download, Headphones, Pause, Play, RefreshCw, Sparkles, X } from "lucide-react";
+import { Download, Pause, Play, RefreshCw, Sparkles, X } from "lucide-react";
 import { cancelJob } from "../lib/generate";
 import { SOUND_TAGS, hasTTS, speech, ttsLabel } from "../lib/llm";
 import { useStore } from "../lib/store";
 import type { Doc, Job } from "../lib/types";
 import { toast } from "../components/feedback";
+import { Mascot } from "../components/Mascot";
+import "../styles/study.css";
 
 
 export function Podcast({ doc, job, onGenerate }: { doc: Doc; job?: Job; onGenerate: () => void }) {
@@ -49,7 +51,7 @@ export function Podcast({ doc, job, onGenerate }: { doc: Doc; job?: Job; onGener
     [],
   );
   useEffect(() => {
-    document.querySelector(".line.now")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    document.querySelector(".pc-line.now")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [idx]);
   // A new script invalidates playback position and any HD render of the old one.
   useEffect(() => {
@@ -137,45 +139,54 @@ export function Podcast({ doc, job, onGenerate }: { doc: Doc; job?: Job; onGener
 
   if (job && !job.error)
     return (
-      <div className="empty-note">
-        <span className="spinner" /> {job.step}
-        <button onClick={() => cancelJob(`${doc.id}:podcast`)}><X size={14} /> Cancel</button>
+      <div className="st-wrap">
+        <div className="pc-empty" role="status" aria-live="polite">
+          <Mascot size={120} mood="thinking" />
+          <h2>Recording your podcast</h2>
+          <p className="muted">{job.step}</p>
+          <div className="gen-indeterminate" aria-hidden><div /></div>
+          <button className="gen-cancel" onClick={() => cancelJob(`${doc.id}:podcast`)}><X size={15} /> Cancel</button>
+        </div>
       </div>
     );
 
   if (!lines.length)
     return (
-      <div className="empty-note">
-        <Headphones size={32} />
-        <p>Turn your notes into a two-host conversation you can listen to anywhere.</p>
-        <button className="primary" onClick={onGenerate} disabled={!doc.notes && !doc.source}><Sparkles size={16} /> Generate podcast</button>
-        {job?.error && <p className="error-text">{job.error}</p>}
+      <div className="st-wrap">
+        <div className="pc-empty">
+          <Mascot size={120} mood="reading" />
+          <h2>Listen to your notes</h2>
+          <p className="muted">Turn your notes into a two-host conversation you can listen to anywhere.</p>
+          <button className="primary gen-go" onClick={onGenerate} disabled={!doc.notes && !doc.source}><Sparkles size={16} /> Generate podcast</button>
+          {job?.error && <p className="error-text" role="alert">{job.error}</p>}
+        </div>
       </div>
     );
 
   return (
-    <div className="podcast">
-      <div className="player card">
-        <button className="play-btn" onClick={() => (playing ? stop() : play(Math.max(0, idx)))} aria-label={playing ? "Pause" : "Play"} disabled={!supported && !hd}>
-          {playing ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}
+    <div className="st-wrap pc">
+      <div className="pc-player">
+        <button className="pc-play" onClick={() => (playing ? stop() : play(Math.max(0, idx)))} aria-label={playing ? "Pause" : "Play"} disabled={!supported && !hd}>
+          {playing ? <Pause size={28} fill="currentColor" /> : <Play size={28} fill="currentColor" />}
         </button>
-        <div className="player-main">
-          <b>{doc.title}</b>
+        <div className="pc-main">
+          <b className="pc-title">{doc.title}</b>
           <span className="muted small">{lines.length} lines · Goo &amp; Turbo · {hd ? `${ttsLabel(settings)} voices` : "browser voices"}</span>
-          <div className="progress-line"><div style={{ width: `${((idx + 1) / lines.length) * 100}%` }} /></div>
+          <div className="progress-line" role="progressbar" aria-label="Podcast progress" aria-valuemin={0} aria-valuemax={lines.length} aria-valuenow={idx + 1}><div style={{ width: `${((idx + 1) / lines.length) * 100}%` }} /></div>
         </div>
-        <label className="small">Speed
+        <label className="pc-speed">Speed
           <select value={rate} onChange={(e) => setRate(+e.target.value)}>
             {[0.8, 1, 1.15, 1.3, 1.5, 1.75].map((r) => <option key={r} value={r}>{r}×</option>)}
           </select>
         </label>
       </div>
+      {job?.error && <p className="error-text" role="alert">{job.error}</p>}
 
-      <div className="row">
+      <div className="pc-tools">
         {!hd && voices.length > 0 && (
           <>
-            <label className="small">Goo <select value={vGoo} onChange={(e) => setVGoo(e.target.value)}>{voices.map((v) => <option key={v.name}>{v.name}</option>)}</select></label>
-            <label className="small">Turbo <select value={vTurbo} onChange={(e) => setVTurbo(e.target.value)}>{voices.map((v) => <option key={v.name}>{v.name}</option>)}</select></label>
+            <label className="pc-host goo"><span className="pc-chip">Goo</span><select aria-label="Goo's voice" value={vGoo} onChange={(e) => setVGoo(e.target.value)}>{voices.map((v) => <option key={v.name}>{v.name}</option>)}</select></label>
+            <label className="pc-host turbo"><span className="pc-chip">Turbo</span><select aria-label="Turbo's voice" value={vTurbo} onChange={(e) => setVTurbo(e.target.value)}>{voices.map((v) => <option key={v.name}>{v.name}</option>)}</select></label>
           </>
         )}
         <span className="spacer" />
@@ -199,10 +210,11 @@ export function Podcast({ doc, job, onGenerate }: { doc: Doc; job?: Job; onGener
         <button onClick={onGenerate}><RefreshCw size={15} /> New script</button>
       </div>
 
-      <div className="script">
+      <div className="pc-script" aria-label="Script">
         {lines.map((l, i) => (
-          <button key={i} className={"line " + l.host + (i === idx ? " now" : "")} onClick={() => play(i)}>
-            <b>{l.host}</b> {l.text}
+          <button key={i} className={"pc-line " + l.host + (i === idx ? " now" : "")} aria-current={i === idx ? "true" : undefined} onClick={() => play(i)}>
+            <span className="pc-chip">{l.host}</span>
+            <span className="pc-text">{l.text}</span>
           </button>
         ))}
       </div>

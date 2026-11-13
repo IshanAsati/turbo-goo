@@ -4,7 +4,7 @@ A local-first AI study workspace inspired by Turbo AI, tuned for **CBSE Class 10
 
 ![Home](docs/home.png)
 
-| Notes with typeset math | Spaced-repetition flashcards | A course lesson |
+| Notes with the docked Chat panel | Spaced-repetition flashcards | Paged lesson player with tutor |
 | --- | --- | --- |
 | ![Notes](docs/notes.png) | ![Flashcards](docs/flashcards.png) | ![Course](docs/course.png) |
 
@@ -53,18 +53,18 @@ Security model: the app is served from a custom `turbogoo://` origin (no network
 
 **Study materials**
 - **Notes** are short on purpose: the length target scales with the source (about a fifth of a long source), one idea per bullet, hard word ceiling. Markdown + KaTeX math, tables, split editor, `.md` and PDF export.
-- **Flashcards and quizzes are written from the notes only**, not the full source, which saves tokens and keeps them on what matters. The number of cards and questions scales with the notes, weak or thin model replies are retried, and failures show a message with a Retry button instead of quietly falling back to the offline engine.
+- **Flashcards and quizzes are made on demand, from the notes only**, not the full source, which saves tokens and keeps them on what matters. Open the Flashcards or Quiz tab, pick how many (10/20/30/50 cards, 5/10/15/20 questions), optionally add special instructions, and generate. Thin model replies are retried, and failures show a message with a Retry button instead of quietly falling back to the offline engine.
 - Flashcards: atomic cards, SM-2 spaced repetition with interval previews, keyboard shortcuts, manual add/edit/delete, Anki-importable export
 - Quizzes: multiple choice, fill-in-the-blank and open-ended (AI-graded), timed mode, "more questions", turn mistakes into flashcards
-- **Course (Learn Mode):** a real course, not a quiz. An outline of modules and lessons is planned first, then **each lesson is written in full** (objectives, a teaching section, a worked example, 3 practice problems with hints and full solutions, and a recap). Lessons stream in one after another, so you can start lesson 1 while the rest are still being written. Cancel keeps what is done and "Write remaining lessons" resumes. Progress is tracked per lesson. Each lesson only receives the passages of your material that are relevant to it.
-- Chat with notes: retrieval-grounded streaming answers with sources and "Add to notes"
-- **Chat page** (sidebar → Chat): standalone conversations, saved locally, with multiple attached sources cited by number; drop files onto the page to attach them
+- **Learn (course):** a real course, not a quiz. Lessons unlock in order and play in a full-screen, paged lesson player (teaching, worked example, practice, recap) with a Lesson tutor panel and a Listen button. An outline of modules and lessons is planned first, then **each lesson is written in full** (objectives, a teaching section, a worked example, 3 practice problems with hints and full solutions, and a recap). Lessons stream in one after another, so you can start lesson 1 while the rest are still being written. Cancel keeps what is done and "Write remaining lessons" resumes. Progress is tracked per lesson. Each lesson only receives the passages of your material that are relevant to it.
+- Chat with notes: a docked Chat panel on the Notes tab with retrieval-grounded streaming answers, sources and "Add to notes". Notes also support ==highlight== and ++underline++ marks.
+- **Chat page** (top bar → Chat): standalone conversations, saved locally, with multiple attached sources cited by number; drop files onto the page to attach them
 - Podcast: two-host script; browser voices, or real voices from a TTS provider (including a **local Chatterbox-Turbo server**) with mp3 download
 - Live Assistant: non-destructive margin comments (errors, gaps, tips) checked against your source
 - Study Stream (interleaved cards, questions, snippets) with Pomodoro timer; global Review queue; streak and activity heatmap
 
 **Platform**
-- Hand-built "field notebook" design in light and dark: Fraunces + Instrument Sans, an ochre highlighter accent, WCAG AA contrast, responsive mobile layout, Ctrl+K command palette, keyboard-accessible dialogs
+- Dark-first design with a finished light theme: warm near-black surfaces, a violet accent, Plus Jakarta Sans, an original "Goo" mascot, WCAG AA contrast, a top bar plus a left tool rail (Learn, Notes, Quiz, Flashcards, Podcast, Source) that becomes a bottom tab bar on phones, Ctrl+K command palette, keyboard-accessible dialogs. Tokens and rules are in [docs/DESIGN.md](docs/DESIGN.md)
 - **Stop buttons everywhere**: chat, notes, cards, quizzes, courses and HD voice rendering can all be cancelled mid-response, and the response is actually cancelled, not just hidden
 - Smart model routing: a "smart" model for notes/chat/lessons, a "fast" one for cards/quizzes/grading
 - **Settings → Recent requests** shows the wait before the first word, total time, thinking tokens and tokens per second for each AI call, plus a requests-per-minute counter

@@ -1,0 +1,94 @@
+/* Home: hero + composer card, "Jump back in" bar, Lessons list.
+   Shared composer, source-pill and menu styles live in shell.css. */
+
+.page.home { max-width: 920px; padding-top: 10px; }
+
+/* ---------- hero ---------- */
+.home-hero { text-align: center; padding-top: 6px; }
+.home .home-hero h1 { display: block; margin: 2px 0 30px; font-size: clamp(2rem, 5.4vw, 3.15rem); font-weight: 800; letter-spacing: -.012em; word-spacing: .06em; line-height: 1.1; text-wrap: balance; }
+.home-composer { max-width: 740px; margin: 0 auto; }
+.home-composer textarea { min-height: 44px; }
+.slash-hint { align-self: center; padding: 3px 7px; font-size: 12px; margin-right: 2px; }
+.home .plan { max-width: 740px; margin: 12px auto 0; justify-content: center; text-align: center; font-size: 13.5px; }
+.home .plan kbd { margin-left: 0; }
+
+/* ---------- jump back in ---------- */
+.home .jump { max-width: 800px; margin: 30px auto 0; display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 0 20px 0 14px; border-radius: 999px; background: var(--panel); border: 1.5px solid var(--line); border-bottom-width: 3px; color: var(--ink); text-decoration: none; transition: border-color .12s, background .12s; }
+.home .jump:hover { border-color: color-mix(in srgb, var(--ink) 30%, var(--line)); background: var(--panel2); }
+.home .jump:focus-visible { outline: 2px solid var(--link); outline-offset: 3px; }
+.ring { flex: none; }
+.ring-track { stroke: var(--panel3); }
+.ring-val { stroke: var(--link); transition: stroke-dashoffset .3s; }
+.jump-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; font-size: 15.5px; }
+.jump-meta { color: var(--muted); font-size: 14px; white-space: nowrap; flex: none; }
+.jump-go { display: inline-flex; align-items: center; gap: 5px; color: var(--link); font-weight: 700; font-size: 14.5px; white-space: nowrap; flex: none; }
+.home .jump:hover .jump-go svg, .home .lesson:hover .l-go svg { transform: translateX(3px); }
+.jump-go svg, .l-go svg { transition: transform .15s; }
+
+/* ---------- lessons ---------- */
+.lessons { max-width: 800px; margin: 46px auto 0; }
+.lessons-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.home .lessons-head h2 { display: block; margin: 0; font-size: 1.6rem; font-weight: 800; letter-spacing: -.025em; }
+.home .text-btn { background: none; border: 0; color: var(--muted); padding: 6px 8px; border-radius: 10px; font-size: 14px; font-weight: 600; gap: 6px; }
+.home .text-btn:hover:not(:disabled) { background: none; color: var(--ink); }
+
+.home .folders { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; margin: 12px 0 18px; }
+.folder-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.home .tabchip { border: 1.5px solid transparent; background: none; color: var(--muted); padding: 5px 14px; border-radius: 999px; font-size: 13.5px; font-weight: 600; }
+.home .tabchip:hover:not(:disabled) { background: var(--panel); color: var(--ink); border-color: transparent; }
+.home .tabchip.on { background: var(--brand-soft); color: var(--link); }
+.home .folders .link.small { padding: 4px 8px; font-size: 13px; }
+.home .searchbox { display: flex; align-items: center; gap: 8px; height: 36px; min-width: 190px; padding: 0 14px; background: var(--panel); border: 1.5px solid var(--line); border-radius: 999px; color: var(--muted); }
+.home .searchbox:focus-within { border-color: var(--brand); color: var(--ink); box-shadow: 0 0 0 3px var(--brand-soft); }
+.home .searchbox input { padding: 0; height: 100%; font-size: 14px; }
+.lessons-empty { text-align: center; padding: 24px 0; }
+
+.lesson-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.lesson { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 18px; min-height: 96px; padding: 16px 12px 16px 20px; background: var(--panel); border: 1.5px solid var(--line); border-bottom-width: 3px; border-radius: 18px; transition: border-color .12s, background .12s; }
+.lesson:has(.menu) { z-index: 5; }
+.lesson:hover { border-color: color-mix(in srgb, var(--ink) 30%, var(--line)); }
+.l-tile { --tone: var(--link); width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; background: color-mix(in srgb, var(--tone) 16%, transparent); color: var(--tone); flex: none; }
+.l-tile.t-brand { background: var(--brand-soft); }
+.l-tile.t-ok { --tone: var(--ok); } .l-tile.t-clay { --tone: var(--clay); } .l-tile.t-warn { --tone: var(--warn); } .l-tile.t-bad { --tone: var(--bad); }
+.l-body { min-width: 0; }
+.l-title { display: block; color: var(--ink); text-decoration: none; font: 700 18px/1.35 var(--f-display); letter-spacing: -.015em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.l-title svg { color: var(--link); vertical-align: -1px; margin-right: 6px; }
+.l-title::after { content: ""; position: absolute; inset: 0; border-radius: 18px; }
+.l-title:focus-visible { outline: none; }
+.l-title:focus-visible::after { outline: 2px solid var(--link); outline-offset: 3px; }
+.l-meta { margin: 3px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; color: var(--muted); font-size: 14px; }
+.l-meta .due-pill { font: 700 11.5px/1.5 var(--f-body); padding: 0 9px; border-radius: 999px; }
+.l-go { display: inline-flex; align-items: center; gap: 5px; color: var(--link); font-weight: 700; font-size: 14.5px; white-space: nowrap; padding-right: 4px; }
+.l-menu { position: relative; z-index: 2; }
+.l-menu .icon-btn { width: 36px; height: 36px; padding: 0; border-radius: 50%; }
+.l-menu .menu { z-index: 25; }
+
+.home .heat { margin-top: 40px; }
+
+/* ---------- first run ---------- */
+.home .first-run { max-width: 740px; margin: 44px auto 0; padding: 28px 28px 30px; background: var(--panel); border: 1.5px solid var(--line); border-radius: 22px; justify-items: center; text-align: center; }
+.home .first-run h2 { display: block; margin: 0; font-size: 1.6rem; }
+.home .first-run .primary { margin-top: 10px; padding: 11px 22px 9px; border-radius: 999px; }
+
+/* ---------- small screens ---------- */
+@media (max-width: 760px) {
+  .home .home-hero h1 { margin-bottom: 22px; }
+  .home .jump { margin-top: 24px; }
+  .jump-more { display: none; }
+}
+@media (max-width: 560px) {
+  .page.home { padding-left: 14px; padding-right: 14px; }
+  .composer-card { padding: 12px 12px 10px; border-radius: 24px; }
+  .src-pill { padding: 0 11px 0 10px; gap: 5px; }
+  .home-composer .cc-right { width: 100%; }
+  .home-composer .cc-right .sel { flex: 1 1 0; min-width: 0; }
+  .home-composer .cc-right .sel select { width: 100%; max-width: none; }
+  .slash-hint { display: none; }
+  .jump-meta { display: none; }
+  .lesson { grid-template-columns: auto minmax(0, 1fr) auto; gap: 14px; padding: 14px 8px 14px 14px; }
+  .l-go { display: none; }
+  .home .folders { gap: 10px; }
+  .home .searchbox { width: 100%; }
+}
+@media (hover: none) { .slash-hint { display: none; } }
+

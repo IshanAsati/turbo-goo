@@ -1,16 +1,21 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { CheckCircle2, Timer, XCircle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Check, CheckCircle2, Sparkles, Timer, X, XCircle } from "lucide-react";
 import { gradeOpen, sameAnswer } from "../lib/ai";
-import { cancelJob, moreQuiz } from "../lib/generate";
+import { cancelJob, generateQuiz, moreQuiz } from "../lib/generate";
 import { newCard } from "../lib/srs";
 import { recordActivity, uid, updateDoc, useJob, useStore } from "../lib/store";
 import { shuffle } from "../lib/text";
 import type { Doc, QuizQ } from "../lib/types";
 import { Markdown } from "../components/Markdown";
+import { Mascot } from "../components/Mascot";
+import { GeneratorScreen } from "../components/GeneratorScreen";
 import { toast } from "../components/feedback";
+import "../styles/study.css";
 
 type Result = { ok: boolean; score: number; msg: string };
 type Answered = { q: QuizQ; res: Result };
+
+const KIND: Record<QuizQ["kind"], string> = { mc: "Multiple choice", cloze: "Fill in the blank", open: "Explain" };
 
 export function Quiz({ doc }: { doc: Doc }) {
   const { settings } = useStore();
@@ -23,14 +28,26 @@ export function Quiz({ doc }: { doc: Doc }) {
   const [grading, setGrading] = useState(false);
   const [timed, setTimed] = useState(false);
   const [picked, setPicked] = useState<number | null>(null);
+  const [custom, setCustom] = useState(false); // the student opened the generator to add questions to an existing quiz
+  const before = useRef(0);
 
   const q: QuizQ | undefined = order[i];
   const finished = order.length > 0 && !q;
 
-  // Keep the session in sync when generation finishes after the tab was opened.
+  const restart = useCallback((qs: QuizQ[]) => (setOrder(shuffle(qs)), setI(0), setAnswered([]), setRes(null), setVal(""), setPicked(null)), []);
+
+  // Keep the session in sync when questions are written after the tab was opened, and drop it when the quiz is cleared.
   useEffect(() => {
-    if (order.length === 0 && doc.quiz.length) setOrder(shuffle(doc.quiz));
-  }, [doc.quiz, order.length]);
+    if (order.length === 0 && doc.quiz.length) restart(doc.quiz);
+    else if (order.length && doc.quiz.length === 0) restart([]);
+  }, [doc.quiz, order.length, restart]);
+  // Questions the student asked for with options: play just the new ones.
+  useEffect(() => {
+    if (custom && !job && doc.quiz.length > before.current) {
+      setCustom(false);
+      restart(doc.quiz.slice(before.current));
+    }
+  }, [custom, job, doc.quiz, restart]);
 
   const submit = useCallback(
     async (choice?: number) => {
@@ -75,13 +92,17 @@ export function Quiz({ doc }: { doc: Doc }) {
     setPicked(null);
   }, [i, order.length, answered, doc.id]);
 
-  // Keyboard: 1-4 pick an option, Enter continues.
+  // Keyboard: 1-4 (or A-D) pick an option, Enter continues.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).closest("input,textarea")) return;
-      if (res && e.key === "Enter") return next();
+      if ((e.target instanceof Element ? e.target : document.body).closest("input,textarea,select")) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (res && e.key === "Enter") {
+        if ((e.target instanceof Element ? e.target : document.body).closest("button")) return; // the focused button handles Enter itself
+        return next();
+      }
       if (!res && q?.kind === "mc") {
-        const n = Number(e.key);
+        const n = Number(e.key) || "abcd".indexOf(e.key.toLowerCase()) + 1;
         if (n >= 1 && n <= 4) void submit(n - 1);
       }
     };
@@ -89,32 +110,48 @@ export function Quiz({ doc }: { doc: Doc }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [q, res, next, submit]);
 
-  const restart = (qs: QuizQ[]) => (setOrder(shuffle(qs)), setI(0), setAnswered([]), setRes(null), setVal(""), setPicked(null));
   const total = answered.reduce((a, x) => a + x.res.score, 0);
   const missed = useMemo(() => answered.filter((a) => !a.res.ok), [answered]);
+  const writing = !!job && !job.error;
 
   async function more() {
     const extra = await moreQuiz(doc);
     if (extra.length) restart(extra);
   }
 
-  if (!doc.quiz.length)
+  if (!doc.quiz.length || custom)
     return (
-      <div className="empty-note">
-        <p className="muted">{job ? "Writing questions…" : "No quiz questions yet."}</p>
-        <button className="primary" disabled={!!job && !job.error} onClick={more}>Generate quiz</button>
-        {job && !job.error && <button onClick={() => cancelJob(doc.id + ":quiz")}>Cancel</button>}
+      <div className="st-wrap">
+        <GeneratorScreen
+          doc={doc}
+          kind="quiz"
+          job={job}
+          jobKey={doc.id + ":quiz"}
+          onGenerate={(o) => ((before.current = doc.quiz.length), void generateQuiz(doc, o))}
+          onBack={doc.quiz.length ? () => (cancelJob(doc.id + ":quiz"), setCustom(false)) : undefined}
+        />
       </div>
     );
 
   if (finished) {
     const pct = Math.round((total / Math.max(1, answered.length)) * 100);
+    const R = 54;
+    const C = 2 * Math.PI * R;
     return (
-      <div className="quiz results">
-        <h2>{pct >= 80 ? "Great work" : pct >= 50 ? "Getting there" : "Keep practising"}: {pct}%</h2>
+      <div className="st-wrap qz qz-results">
+        <Mascot size={128} mood="cheer" />
+        <div className="qz-ring" role="img" aria-label={`Score ${pct} percent`}>
+          <svg viewBox="0 0 128 128" width="150" height="150" aria-hidden>
+            <circle cx="64" cy="64" r={R} className="qz-ring-track" />
+            <circle cx="64" cy="64" r={R} className="qz-ring-val" strokeDasharray={C} strokeDashoffset={C * (1 - pct / 100)} transform="rotate(-90 64 64)" />
+          </svg>
+          <b>{pct}%</b>
+        </div>
+        <h2 className="qz-title">{pct >= 80 ? "Great work" : pct >= 50 ? "Getting there" : "Keep practising"}</h2>
         <p className="muted">{Math.round(total * 10) / 10} of {answered.length} correct</p>
         {doc.quizHistory.length > 1 && <p className="muted small">Previous scores: {doc.quizHistory.slice(-6, -1).map((h) => Math.round((h.score / Math.max(1, h.total)) * 100) + "%").join(" · ")}</p>}
-        <div className="row">
+        <div className="qz-actions">
+          <button className="primary" disabled={writing} onClick={more}>{writing ? "Writing…" : "More questions"}</button>
           <button onClick={() => restart(doc.quiz)}>Retake all</button>
           {missed.length > 0 && <button onClick={() => restart(missed.map((m) => m.q))}>Retry {missed.length} missed</button>}
           {missed.length > 0 && (
@@ -128,58 +165,78 @@ export function Quiz({ doc }: { doc: Doc }) {
               Turn mistakes into flashcards
             </button>
           )}
-          <button className="primary" disabled={!!job && !job.error} onClick={more}>{job && !job.error ? "Writing…" : "More questions"}</button>
-          {job && !job.error && <button onClick={() => cancelJob(doc.id + ":quiz")}>Cancel</button>}
+          <button onClick={() => (before.current = doc.quiz.length, setCustom(true))} disabled={writing}><Sparkles size={15} /> Choose how many</button>
+          {writing && <button onClick={() => cancelJob(doc.id + ":quiz")}><X size={15} /> Cancel</button>}
         </div>
-        {job?.error && <p className="error-text">{job.error}</p>}
+        {job?.error && <p className="error-text" role="alert">{job.error}</p>}
       </div>
     );
   }
   if (!q) return null;
 
   return (
-    <div className="quiz">
-      <div className="progress-line"><div style={{ width: `${(i / order.length) * 100}%` }} /></div>
-      <div className="toolbar-row">
-        <span className="muted small">Question {i + 1} of {order.length} · {q.kind === "mc" ? "multiple choice" : q.kind === "cloze" ? "fill in the blank" : "explain"}</span>
+    <div className="st-wrap qz">
+      <div className="progress-line qz-progress" role="progressbar" aria-label="Quiz progress" aria-valuemin={0} aria-valuemax={order.length} aria-valuenow={i}>
+        <div style={{ width: `${(i / order.length) * 100}%` }} />
+      </div>
+      <div className="qz-head">
+        <span className="qz-count">Question {i + 1} of {order.length}</span>
+        <span className="qz-kind">{KIND[q.kind]}</span>
         <span className="spacer" />
-        <label className="check small"><input type="checkbox" checked={timed} onChange={(e) => setTimed(e.target.checked)} /> Timed</label>
+        <label className="qz-timed">
+          <input type="checkbox" checked={timed} onChange={(e) => setTimed(e.target.checked)} />
+          <span className="qz-switch" aria-hidden />
+          Timed
+        </label>
         {timed && !res && <Countdown key={q.id} secs={q.kind === "open" ? 90 : 30} onEnd={() => (q.kind === "mc" ? submit(-1) : submit())} />}
       </div>
-      <Markdown text={q.q} className="qtext" />
-      {q.kind === "mc" && (
-        <div className="options" role="radiogroup">
-          {q.options.map((o, k) => (
-            <button
-              key={k}
-              role="radio"
-              aria-checked={picked === k}
-              disabled={!!res}
-              className={"option" + (res && k === q.answer ? " right" : "") + (res && picked === k && k !== q.answer ? " wrong" : "")}
-              onClick={() => submit(k)}
-            >
-              <kbd>{k + 1}</kbd> <Markdown text={o} />
-            </button>
-          ))}
-        </div>
-      )}
-      {q.kind !== "mc" && (
-        <>
-          {q.kind === "cloze" ? (
-            <input autoFocus aria-label="Your answer" placeholder="Type the missing word or phrase" value={val} disabled={!!res} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => e.key === "Enter" && val.trim() && !res && submit()} />
-          ) : (
-            <textarea autoFocus aria-label="Your answer" rows={4} placeholder="Explain in your own words…" value={val} disabled={!!res} onChange={(e) => setVal(e.target.value)} />
-          )}
-          {!res && (
-            <button className="primary" disabled={grading || !val.trim()} onClick={() => submit()}>
-              {grading ? "Grading…" : "Check answer"}
-            </button>
-          )}
-        </>
-      )}
+
+      <div className="qz-card">
+        <Markdown text={q.q} className="qz-q" />
+        {q.kind === "mc" && (
+          <div className="qz-options" role="radiogroup" aria-label="Answer options">
+            {q.options.map((o, k) => {
+              const right = !!res && k === q.answer;
+              const wrong = !!res && picked === k && k !== q.answer;
+              return (
+                <button
+                  key={k}
+                  role="radio"
+                  aria-checked={picked === k}
+                  disabled={!!res}
+                  className={"qz-opt" + (right ? " right" : "") + (wrong ? " wrong" : "") + (res && !right && !wrong ? " dim" : "")}
+                  onClick={() => submit(k)}
+                  title={`Press ${k + 1}`}
+                >
+                  <span className="qz-badge" aria-hidden>{right ? <Check size={16} strokeWidth={3} /> : wrong ? <X size={16} strokeWidth={3} /> : "ABCD"[k]}</span>
+                  <span className="qz-opt-text"><Markdown text={o} /></span>
+                  {right && <span className="qz-flag">Correct answer</span>}
+                  {wrong && <span className="qz-flag">Your answer</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {q.kind !== "mc" && (
+          <div className="qz-answer">
+            {q.kind === "cloze" ? (
+              <input autoFocus aria-label="Your answer" placeholder="Type the missing word or phrase" value={val} disabled={!!res} onChange={(e) => setVal(e.target.value)} onKeyDown={(e) => e.key === "Enter" && val.trim() && !res && submit()} />
+            ) : (
+              <textarea autoFocus aria-label="Your answer" rows={5} placeholder="Explain in your own words…" value={val} disabled={!!res} onChange={(e) => setVal(e.target.value)} />
+            )}
+            {!res && (
+              <button className="primary" disabled={grading || !val.trim()} onClick={() => submit()}>
+                {grading ? "Grading…" : "Check answer"}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+      {!res && q.kind === "mc" && <p className="qz-tip">Press 1–4 to choose</p>}
+
       {res && (
-        <div className={"result " + (res.ok ? "ok" : "bad")} role="status">
-          <div className="result-head">{res.ok ? <CheckCircle2 size={20} /> : <XCircle size={20} />} <b>{res.ok ? "Correct" : q.kind === "open" && res.score > 0.3 ? "Partly right" : "Not quite"}</b></div>
+        <div className={"qz-result " + (res.ok ? "ok" : "bad")} role="status">
+          <div className="qz-result-head">{res.ok ? <CheckCircle2 size={22} /> : <XCircle size={22} />} <b>{res.ok ? "Correct" : q.kind === "open" && res.score > 0.3 ? "Partly right" : "Not quite"}</b></div>
           <Markdown text={res.msg} />
           <button className="primary" autoFocus onClick={next}>{i + 1 >= order.length ? "See results" : "Next"} <kbd>Enter</kbd></button>
         </div>
@@ -195,5 +252,5 @@ function Countdown({ secs, onEnd }: { secs: number; onEnd: () => void }) {
     const id = setTimeout(() => setT((x) => x - 1), 1000);
     return () => clearTimeout(id);
   }, [t]); // eslint-disable-line react-hooks/exhaustive-deps
-  return <span className={"timer" + (t <= 5 ? " urgent" : "")}><Timer size={14} /> {t}s</span>;
+  return <span className={"qz-timer" + (t <= 5 ? " urgent" : "")} role="timer"><Timer size={14} /> {t}s</span>;
 }

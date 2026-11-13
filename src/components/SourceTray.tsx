@@ -1,5 +1,5 @@
-import { useRef, useState } from "react";
-import { BookOpen, ClipboardPaste, FileText, Image, Library, Link2, Mic, Paperclip, Plus, Video, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { BookOpen, ClipboardPaste, Ellipsis, FileText, FileUp, Image, Library, Link2, Mic, Paperclip, Plus, SquarePlay, Video, X } from "lucide-react";
 import type { Attachment, Doc } from "../lib/types";
 import { ACCEPT, isYouTube } from "../lib/ingest";
 import { attachDoc, attachFile, attachText, attachYouTube, sizeLabel } from "../lib/sources";
@@ -59,46 +59,111 @@ export function AttachmentChips({ api, compact }: { api: AttachApi; compact?: bo
     <ul className={"att-list" + (compact ? " compact" : "")} aria-label="Attached sources">
       {api.atts.map((a, i) => (
         <li key={a.id} className={"att " + a.kind} title={a.name}>
-          <span className="att-n">{String(i + 1).padStart(2, "0")}</span>
+          <span className="att-n">{i + 1}</span>
           {ICON[a.kind] ?? <FileText size={13} />}
           <span className="att-name">{a.name}</span>
           <span className="att-size">{sizeLabel(a.text.length)}</span>
           <button className="att-x" aria-label={`Remove ${a.name}`} onClick={() => api.remove(a.id)}><X size={12} /></button>
         </li>
       ))}
-      {api.busy && <li className="att busy"><span className="spinner" /> {api.busy}</li>}
+      {api.busy && <li className="att busy" role="status"><span className="spinner" /> {api.busy}</li>}
     </ul>
   );
+}
+
+type DialogKind = null | "link" | "text" | "library";
+
+/** Closes a popup menu on Escape or a click outside it. */
+function useDismiss(open: boolean, close: () => void) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => !ref.current?.contains(e.target as Node) && close();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, close]);
+  return ref;
+}
+
+/** The link / paste text / library dialogs, shared by every entry point that can open them. */
+function AttachDialogs({ api, dialog, onClose }: { api: AttachApi; dialog: DialogKind; onClose: () => void }) {
+  if (!dialog) return null;
+  return (
+    <Modal onClose={onClose} label="Attach a source" narrow={dialog !== "library"}>
+      {dialog === "link" && <LinkForm onDone={async (u) => (await api.addLink(u)) && onClose()} busy={!!api.busy} />}
+      {dialog === "text" && <TextForm onDone={(t, n) => (api.addText(t, n), onClose())} />}
+      {dialog === "library" && <LibraryPicker taken={api.atts.map((a) => a.docId).filter(Boolean) as string[]} onDone={(docs) => (api.addDocs(docs), onClose())} />}
+    </Modal>
+  );
+}
+
+function FileInput({ api, inputRef }: { api: AttachApi; inputRef: React.RefObject<HTMLInputElement | null> }) {
+  return <input ref={inputRef} hidden multiple type="file" accept={ACCEPT} aria-label="Choose files" onChange={(e) => (void api.addFiles(e.target.files), (e.target.value = ""))} />;
 }
 
 /** The "+ Attach" button and its menu: files, YouTube link, pasted text, library documents. */
 export function AttachButton({ api, label = "Attach" }: { api: AttachApi; label?: string }) {
   const [open, setOpen] = useState(false);
-  const [dialog, setDialog] = useState<null | "link" | "text" | "library">(null);
+  const [dialog, setDialog] = useState<DialogKind>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const pick = (d: typeof dialog) => (setOpen(false), setDialog(d));
+  const wrap = useDismiss(open, () => setOpen(false));
+  const pick = (d: DialogKind) => (setOpen(false), setDialog(d));
   return (
-    <div className="menu-wrap">
+    <div className="menu-wrap" ref={wrap}>
       <button className="ghost-btn" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)} disabled={!!api.busy}>
         <Paperclip size={15} /> {label}
       </button>
       {open && (
-        <div className="menu up" role="menu" onMouseLeave={() => setOpen(false)}>
+        <div className="menu up" role="menu">
           <button role="menuitem" onClick={() => (setOpen(false), fileRef.current?.click())}><Plus size={14} /> Files <small>PDF, Word, slides, images, audio</small></button>
           <button role="menuitem" onClick={() => pick("link")}><Link2 size={14} /> YouTube link</button>
           <button role="menuitem" onClick={() => pick("text")}><ClipboardPaste size={14} /> Paste text</button>
           <button role="menuitem" onClick={() => pick("library")}><Library size={14} /> From your library</button>
         </div>
       )}
-      <input ref={fileRef} hidden multiple type="file" accept={ACCEPT} onChange={(e) => (void api.addFiles(e.target.files), (e.target.value = ""))} />
-      {dialog && (
-        <Modal onClose={() => setDialog(null)} label="Attach a source" narrow={dialog !== "library"}>
-          {dialog === "link" && <LinkForm onDone={async (u) => (await api.addLink(u)) && setDialog(null)} busy={!!api.busy} />}
-          {dialog === "text" && <TextForm onDone={(t, n) => (api.addText(t, n), setDialog(null))} />}
-          {dialog === "library" && <LibraryPicker taken={api.atts.map((a) => a.docId).filter(Boolean) as string[]} onDone={(docs) => (api.addDocs(docs), setDialog(null))} />}
-        </Modal>
-      )}
+      <FileInput api={api} inputRef={fileRef} />
+      <AttachDialogs api={api} dialog={dialog} onClose={() => setDialog(null)} />
     </div>
+  );
+}
+
+/**
+ * The row of source pills in a composer: Record (when `onRecord` is given), Upload, YouTube, and a "More" menu
+ * (paste text, from your library). All of them add to the same `useAttachments` state.
+ */
+export function SourcePills({ api, onRecord, menuDir = "below" }: { api: AttachApi; onRecord?: () => void; menuDir?: "up" | "below" }) {
+  const [open, setOpen] = useState(false);
+  const [dialog, setDialog] = useState<DialogKind>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const wrap = useDismiss(open, () => setOpen(false));
+  const busy = !!api.busy;
+  const pick = (d: DialogKind) => (setOpen(false), setDialog(d));
+  return (
+    <>
+      {onRecord && (
+        <button className="src-pill" onClick={onRecord} disabled={busy}><Mic size={15} className="i-rec" aria-hidden /> Record</button>
+      )}
+      <button className="src-pill" onClick={() => fileRef.current?.click()} disabled={busy}><FileUp size={15} className="i-up" aria-hidden /> Upload</button>
+      <button className="src-pill" onClick={() => setDialog("link")} disabled={busy}><SquarePlay size={15} className="i-yt" aria-hidden /> YouTube</button>
+      <div className="menu-wrap" ref={wrap}>
+        <button className="src-pill more" aria-haspopup="menu" aria-expanded={open} aria-label="More ways to add a source" title="More: paste text, from your library" onClick={() => setOpen(!open)} disabled={busy}>
+          <Ellipsis size={16} aria-hidden />
+        </button>
+        {open && (
+          <div className={"menu " + menuDir} role="menu">
+            <button role="menuitem" onClick={() => pick("text")}><ClipboardPaste size={14} /> Paste text</button>
+            <button role="menuitem" onClick={() => pick("library")}><Library size={14} /> From your library</button>
+          </div>
+        )}
+      </div>
+      <FileInput api={api} inputRef={fileRef} />
+      <AttachDialogs api={api} dialog={dialog} onClose={() => setDialog(null)} />
+    </>
   );
 }
 
@@ -109,7 +174,7 @@ function LinkForm({ onDone, busy }: { onDone: (url: string) => void; busy: boole
     <>
       <h2>Attach a YouTube video</h2>
       <p className="muted small">The transcript is fetched and attached. Works best in the desktop app.</p>
-      <input autoFocus placeholder="https://www.youtube.com/watch?v=…" value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => e.key === "Enter" && ok && onDone(url)} />
+      <input autoFocus aria-label="YouTube link" placeholder="https://www.youtube.com/watch?v=…" value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => e.key === "Enter" && ok && onDone(url)} />
       <div className="row end">
         <button className="primary" disabled={!ok || busy} onClick={() => onDone(url)}>{busy ? <><span className="spinner" /> Fetching…</> : "Attach"}</button>
       </div>
@@ -123,8 +188,8 @@ function TextForm({ onDone }: { onDone: (text: string, name: string) => void }) 
   return (
     <>
       <h2>Paste text</h2>
-      <input placeholder="Name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
-      <textarea autoFocus rows={10} placeholder="Lecture notes, an article, a transcript…" value={text} onChange={(e) => setText(e.target.value)} />
+      <input placeholder="Name (optional)" aria-label="Name" value={name} onChange={(e) => setName(e.target.value)} />
+      <textarea autoFocus rows={10} aria-label="Text" placeholder="Lecture notes, an article, a transcript…" value={text} onChange={(e) => setText(e.target.value)} />
       <div className="row end">
         <button className="primary" disabled={text.trim().length < 20} onClick={() => onDone(text, name)}>Attach</button>
       </div>
@@ -147,7 +212,7 @@ function LibraryPicker({ taken, onDone }: { taken: string[]; onDone: (docs: Doc[
   return (
     <>
       <h2>Attach from your library</h2>
-      <input autoFocus placeholder="Filter documents" value={q} onChange={(e) => setQ(e.target.value)} />
+      <input autoFocus aria-label="Filter documents" placeholder="Filter documents" value={q} onChange={(e) => setQ(e.target.value)} />
       <ul className="pick-list">
         {shown.map((d) => (
           <li key={d.id}>
