@@ -12,9 +12,9 @@
     "preview": "vite preview",
     "build:electron": "node scripts/build-electron.mjs",
     "desktop": "npm run build && npm run build:electron && electron .",
-    "dist:win": "npm run build && npm run build:electron && electron-builder --win",
-    "dist:mac": "npm run build && npm run build:electron && electron-builder --mac",
-    "dist:linux": "npm run build && npm run build:electron && electron-builder --linux"
+    "dist:win": "npm run build && npm run build:electron && electron-builder --win --publish never",
+    "dist:mac": "npm run build && npm run build:electron && electron-builder --mac --publish never",
+    "dist:linux": "npm run build && npm run build:electron && electron-builder --linux --publish never"
   },
   "build": {
     "appId": "app.turbogoo.desktop",
