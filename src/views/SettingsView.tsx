@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Activity, AudioLines, CheckCircle2, Database, Download, Eye, EyeOff, GraduationCap, Monitor, Moon, Palette as PaletteIcon, Plug, Sun, Upload, Volume2 } from "lucide-react";
+import { Activity, AudioLines, CheckCircle2, Cloud, Database, Download, Eye, EyeOff, GraduationCap, Monitor, Moon, Palette as PaletteIcon, Plug, Sun, Upload, Volume2 } from "lucide-react";
 import { PRESETS, STT_PRESETS, TTS_PRESETS, getStats, hasLLM, hasSTT, hasTTS, isLocalUrl, listVoices, probeModels, subscribeStats, testConnection, testSTT, testTTS } from "../lib/llm";
+import { setPublikAi, signInPublik, turnOffPublik, usePublik } from "../lib/publik";
 import { setSettings, setState, uid, useStore } from "../lib/store";
 import { confirmDialog, toast } from "../components/feedback";
 import { ankiTsv, download } from "./Flashcards";
@@ -56,6 +57,7 @@ const REASONING: { id: Settings["reasoning"]; label: string }[] = [
 const SECTIONS = [
   { id: "focus", label: "Study focus", icon: GraduationCap },
   { id: "ai", label: "AI provider", icon: Plug },
+  { id: "publik", label: "publik", icon: Cloud },
   { id: "stt", label: "Speech-to-text", icon: AudioLines },
   { id: "tts", label: "Text-to-speech", icon: Volume2 },
   { id: "requests", label: "Recent requests", icon: Activity },
@@ -119,6 +121,7 @@ export function SettingsView() {
   const ai = useTest(() => testConnection(s));
   const stt = useTest(() => testSTT(s));
   const sttShared = !s.sttBaseUrl.trim();
+  const pubState = usePublik();
 
   async function importBackup(f?: File) {
     if (!f) return;
@@ -168,6 +171,9 @@ export function SettingsView() {
               </button>
             ))}
           </div>
+          {pubState.signedIn && pubState.ai && (
+            <p className="muted small">publik API is on, so AI requests go to publik and the provider settings below are not used. They are kept, and used again when you turn publik API off.</p>
+          )}
           <label>Base URL<input value={s.baseUrl} onChange={(e) => setSettings({ baseUrl: e.target.value })} /></label>
           <label>API key<KeyInput value={s.apiKey} onChange={(v) => setSettings({ apiKey: v })} /></label>
           <div className="two">
@@ -191,6 +197,8 @@ export function SettingsView() {
           </div>
           <ResultBox r={ai.result} />
         </Section>
+
+        <PublikSection />
 
         <Section
           id="stt"
@@ -257,6 +265,57 @@ export function SettingsView() {
         </Section>
       </div>
     </div>
+  );
+}
+
+/** publik: optional sign-in, usage counting and publik API. Shown only in the desktop app. */
+function PublikSection() {
+  const p = usePublik();
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<Result>(null);
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    setResult(null);
+    try {
+      await fn();
+    } catch (e) {
+      setResult({ ok: false, msg: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!p.available) return null;
+  const turnOff = async () => {
+    if (await confirmDialog("Turn off publik?", "TurboGoo restarts. The publik key is removed from this computer and usage counting stops. Your documents stay on this device.", "Turn off and restart", true)) await run(turnOffPublik);
+  };
+  return (
+    <Section
+      id="publik"
+      desc="publik is optional. Signing in lets publik count your use of TurboGoo, and gives you publik API: AI with no key of your own, paid per use. Without it, TurboGoo never contacts publik and works as before."
+    >
+      <p className="small muted">
+        {p.signedIn ? "Signed in to publik." : p.mode === "signed_in" ? "Not connected in this session. Sign in again to connect." : "Not signed in. TurboGoo does not contact publik."}
+      </p>
+      <div className="row">
+        {!p.signedIn && (
+          <button className="primary" disabled={busy} onClick={() => run(signInPublik)}>
+            {busy ? "Waiting for sign-in…" : "Sign in with publik"}
+          </button>
+        )}
+        {p.mode === "signed_in" && (
+          <button className="danger" disabled={busy} onClick={turnOff}>
+            Turn off publik
+          </button>
+        )}
+      </div>
+      {p.signedIn && (
+        <label className="check">
+          <input type="checkbox" role="switch" checked={p.ai} disabled={busy} onChange={(e) => run(() => setPublikAi(e.target.checked))} />
+          Use publik API for AI
+        </label>
+      )}
+      <ResultBox r={result} />
+    </Section>
   );
 }
 

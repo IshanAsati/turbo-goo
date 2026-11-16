@@ -1,6 +1,24 @@
 import type { Settings } from "./types";
+import { PUBLIK_BASE_URL, PUBLIK_KEY_PLACEHOLDER, publikAiOn } from "./publik";
 
-export const hasLLM = (s: Settings) => !!s.apiKey.trim();
+/** When publik API is on (signed in, and the switch in Settings → publik is on), AI requests go to publik and the provider
+ *  fields in Settings are not used. Those fields are never changed, so turning publik off brings them straight back. */
+const pinned = new WeakSet<Settings>(); // connections already chosen (publik or one specific provider): never rewritten
+const pub = (s: Settings): Settings => {
+  if (pinned.has(s) || !publikAiOn()) return s;
+  const r: Settings = { ...s, baseUrl: PUBLIK_BASE_URL, apiKey: PUBLIK_KEY_PLACEHOLDER, model: "publik-balanced", fastModel: "publik-fast", reasoning: "auto" };
+  pinned.add(r);
+  return r;
+};
+/** A connection to one specific provider (speech services with their own provider, or the user's own AI provider). publik never takes it over. */
+const own = (s: Settings, baseUrl: string, apiKey: string): Settings => {
+  const r = { ...s, baseUrl, apiKey };
+  pinned.add(r);
+  return r;
+};
+const onPublik = (s: Settings) => base(s).startsWith(PUBLIK_BASE_URL);
+
+export const hasLLM = (s: Settings) => !!pub(s).apiKey.trim();
 
 export class LLMError extends Error {
   constructor(
@@ -12,11 +30,11 @@ export class LLMError extends Error {
 }
 
 export type Tier = "fast" | "smart";
-export const modelFor = (s: Settings, tier: Tier) => (tier === "fast" ? s.fastModel || s.model : s.model);
+export const modelFor = (s: Settings, tier: Tier) => ((p) => (tier === "fast" ? p.fastModel || p.model : p.model))(pub(s));
 
-const base = (s: Settings) => s.baseUrl.trim().replace(/\/+$/, "");
+const base = (s: Settings) => pub(s).baseUrl.trim().replace(/\/+$/, "");
 // Local servers (Ollama, Chatterbox, local Whisper) often need no key, so only send Authorization when there is one.
-const headers = (s: Settings, extra: Record<string, string> = {}) => ({ ...(s.apiKey.trim() ? { Authorization: `Bearer ${s.apiKey}` } : {}), ...extra });
+const headers = (s: Settings, extra: Record<string, string> = {}) => ({ ...(pub(s).apiKey.trim() ? { Authorization: `Bearer ${pub(s).apiKey}` } : {}), ...extra });
 export const isLocalUrl = (u: string) => /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i.test(u.trim());
 
 function friendly(status: number, body: string): string {
@@ -26,6 +44,19 @@ function friendly(status: number, body: string): string {
     detail = typeof j.detail === "string" ? j.detail : typeof j.error?.message === "string" ? j.error.message : "";
   } catch {
     /* not JSON */
+  }
+  if (status === 402) {
+    // publik: not enough balance. Its message plus exactly one link; the user's own key stays usable.
+    let msg = "Your publik balance is too low for this request.";
+    let url = "";
+    try {
+      const e = JSON.parse(body).error;
+      if (typeof e?.message === "string") msg = e.message;
+      if (typeof e?.top_up_url === "string") url = e.top_up_url;
+    } catch {
+      /* not JSON */
+    }
+    return `${msg}${url ? ` ${url}` : ""} Or turn off publik API in Settings → publik to use your own key.`;
   }
   if (status === 401) return "The API key was rejected (401). Check it in Settings.";
   if (status === 404 && /not found for account/i.test(detail || body))
@@ -115,7 +146,7 @@ export const getStats = () => stats;
  *  `noThink` forces thinking off (used to retry when a reasoning model spent its whole output budget thinking). */
 const rejectsReasoning = new Set<string>(); // base URLs that answered 400 to the reasoning field
 function withReasoning(s: Settings, body: Record<string, unknown>, noThink = false) {
-  const effort = noThink ? "none" : s.reasoning;
+  const effort = noThink ? "none" : pub(s).reasoning;
   // NVIDIA NIM ignores the `reasoning` effort field (measured: "low" still thought for 5-10k characters, 20-80 s per call).
   // Its only working switch is the chat template, so on NVIDIA "low" and "none" both mean thinking off.
   let host = "";
@@ -145,7 +176,8 @@ async function sendTolerant(s: Settings, body: Record<string, unknown>, opts: { 
   } catch (e) {
     // The provider kept failing (5xx / 429) for this model: give the other configured model one try before giving up.
     if (e instanceof LLMError && e.status !== undefined && (e.status >= 500 || e.status === 429)) {
-      const alt = body.model === s.model ? s.fastModel : s.model;
+      const p = pub(s);
+      const alt = body.model === p.model ? p.fastModel : p.model;
       if (alt && alt !== body.model) {
         try {
           return await request(s, "/chat/completions", { method: "POST", headers: headers(s, { "Content-Type": "application/json" }), body: JSON.stringify({ ...body, model: alt }) }, { ...opts, retries: 1 });
@@ -299,7 +331,7 @@ export async function completeJSON<T>(s: Settings, tier: Tier, system: string, u
 
 /** Speech-to-text connection: its own provider if configured, otherwise the main AI provider.
  *  The main key is never sent to a different STT host. */
-const sttConn = (s: Settings): Settings => (s.sttBaseUrl?.trim() ? { ...s, baseUrl: s.sttBaseUrl, apiKey: s.sttApiKey ?? "" } : s);
+const sttConn = (s: Settings): Settings => (s.sttBaseUrl?.trim() ? own(s, s.sttBaseUrl, s.sttApiKey ?? "") : pub(s));
 export const hasSTT = (s: Settings) => { const c = sttConn(s); return !!c.apiKey.trim() || (!!s.sttBaseUrl?.trim() && isLocalUrl(c.baseUrl)); };
 
 /** Speech-to-text via an OpenAI-compatible /audio/transcriptions endpoint (Whisper). */
@@ -307,6 +339,8 @@ export async function transcribe(s: Settings, blob: Blob, filename = "audio.webm
   if (blob.size > 25 * 1024 * 1024) throw new LLMError("That audio file is over 25 MB, the limit for transcription. Trim it or compress it first.");
   const c = sttConn(s);
   if (!hasSTT(s)) throw new LLMError("Speech-to-text isn't set up. Add a provider under Settings → Speech-to-text.");
+  // publik's one-request transcription takes about 4 MB. Say so, instead of letting the host answer with a bare 413.
+  if (onPublik(c) && blob.size > 4 * 1024 * 1024) throw new LLMError("That audio is over about 4 MB, the most publik's speech-to-text takes in one request. Trim it, or add your own speech provider under Settings → Speech-to-text (it is used instead of publik for this).");
   const fd = new FormData();
   fd.append("file", blob, filename);
   fd.append("model", s.sttModel || "whisper-1");
@@ -339,7 +373,7 @@ export const STT_PRESETS: { name: string; baseUrl: string; model: string; note: 
 /* ---------------- text-to-speech (podcast voices) ---------------- */
 
 /** TTS connection: its own provider if configured, otherwise the main AI provider. The main key never goes to another host. */
-const ttsConn = (s: Settings): Settings => (s.ttsBaseUrl?.trim() ? { ...s, baseUrl: s.ttsBaseUrl, apiKey: s.ttsApiKey ?? "" } : s);
+const ttsConn = (s: Settings): Settings => (s.ttsBaseUrl?.trim() ? own(s, s.ttsBaseUrl, s.ttsApiKey ?? "") : own(s, s.baseUrl, s.apiKey));
 /** Local servers like Chatterbox need no key; hosted ones do. */
 export const hasTTS = (s: Settings) => { const c = ttsConn(s); return !!c.apiKey.trim() || (!!s.ttsBaseUrl?.trim() && isLocalUrl(c.baseUrl)); };
 export const ttsLabel = (s: Settings) => (/chatterbox/i.test(s.ttsModel) ? "Chatterbox" : s.ttsBaseUrl?.trim() ? new URL(base(ttsConn(s))).hostname : "HD");

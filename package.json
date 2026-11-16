@@ -25,7 +25,8 @@
     "files": [
       "dist/**",
       "dist-electron/**",
-      "package.json"
+      "package.json",
+      "publik-app-token.txt"
     ],
     "win": {
       "target": [

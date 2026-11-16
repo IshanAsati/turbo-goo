@@ -8,4 +8,11 @@ contextBridge.exposeInMainWorld("turbogoo", {
   exportPdf: (title: string): Promise<string | null> => ipcRenderer.invoke("export-pdf", String(title ?? "")),
   /** Saves a PDF the app built itself (the study schedule): asks where, writes it, opens it. Resolves to the saved path, or null if cancelled. */
   savePdf: (name: string, bytes: Uint8Array): Promise<string | null> => ipcRenderer.invoke("save-pdf", String(name ?? ""), bytes),
+  /** publik (optional). The page only reads and requests changes; the install key never comes through here. */
+  publik: {
+    status: (): Promise<unknown> => ipcRenderer.invoke("publik:status"),
+    signIn: (): Promise<unknown> => ipcRenderer.invoke("publik:sign-in"),
+    setAi: (on: boolean): Promise<unknown> => ipcRenderer.invoke("publik:set-ai", on === true),
+    turnOff: (): Promise<unknown> => ipcRenderer.invoke("publik:turn-off"),
+  },
 });

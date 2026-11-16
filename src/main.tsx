@@ -7,10 +7,16 @@ import "./styles.css";
 import "./styles/theme.css";
 import { App } from "./App";
 import { hydrate } from "./lib/store";
+import { loadPublik } from "./lib/publik";
 
-void hydrate();
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+async function boot() {
+  // The desktop shell's publik state is read before the first screen, so AI calls already know whether publik is on.
+  await loadPublik();
+  void hydrate();
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+}
+void boot();

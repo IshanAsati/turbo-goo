@@ -36,7 +36,11 @@ On Windows, `scripts/launch-turbogoo.ps1` rebuilds and opens the app; point a de
 
 Pushing a tag like `v0.1.0` runs `.github/workflows/release.yml`, which builds all three installers and attaches them to a GitHub Release. Builds are **unsigned**: Windows shows a one-time SmartScreen warning ("More info → Run anyway") and macOS needs right-click → Open the first time. Add signing certificates as repository secrets to remove those warnings.
 
-Security model: the app is served from a custom `turbogoo://` origin (no network port is opened), the renderer is sandboxed with no Node access, a strict Content-Security-Policy applies, only the microphone permission is granted (to exact-origin matches only), and links open in your normal browser. Your API keys stay in the app's local storage and go only to the provider you configure.
+Security model: the app is served from a custom `turbogoo://` origin (no network port is opened), the renderer is sandboxed with no Node access, a strict Content-Security-Policy applies, only the microphone permission is granted (to exact-origin matches only), and links open in your normal browser. Your API keys stay in the app's local storage and go only to the provider you configure, or to publik while publik API is on.
+
+## publik (optional sign-in)
+
+The desktop app asks once, on first launch, whether to sign in with [publik](https://publikhq.com). Signing in lets publik count your use of TurboGoo, and gives you publik API: AI without a key of your own, paid per use. Choose **Continue without publik** and TurboGoo never contacts publik: no sign-in, no publik key, no usage counting. Under **Settings → publik** you can sign in later, switch publik API for AI on or off, or turn publik off (the app restarts). The web app doesn't use publik.
 
 ## Features
 
@@ -117,7 +121,7 @@ Podcast voices can run on your own GPU for free. Install [Chatterbox-TTS-Server]
 
 ## Known limits (honest list)
 
-- **Not built:** accounts, cross-device sync, real-time co-editing and sharing (data is local; use Settings → Backup), native iOS/Android apps, 3D anatomy explorer, pre-made AP/book libraries, Anki `.apkg` (TSV import works).
+- **Not built:** accounts (apart from the optional publik sign-in), cross-device sync, real-time co-editing and sharing (data is local; use Settings → Backup), native iOS/Android apps, 3D anatomy explorer, pre-made AP/book libraries, Anki `.apkg` (TSV import works).
 - Offline mode is a heuristic fallback. Its notes, cards and courses are much weaker than any LLM's, and topic-only courses need an API key.
 - Subject detection is keyword-based. If it guesses wrong, change the subject in the document header; it applies to new questions, chat and regenerated materials.
 - The CBSE guidance follows NCERT Class 10 conventions as understood by the author; it has not been reviewed by a teacher. Check important facts against your textbook.

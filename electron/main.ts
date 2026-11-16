@@ -1,8 +1,9 @@
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, session, shell, Menu } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, net, protocol, session, shell, Menu, type IpcMainInvokeEvent } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 import { getTranscript, setFetch } from "../server/youtube";
+import { credentialPath, ensureSignedIn, readCredential, type GateScreen, type GateUI } from "./publik";
 
 /**
  * TurboGoo desktop shell.
@@ -102,6 +103,16 @@ function hardenSession() {
   // Local model servers (Ollama, LM Studio) reject browser Origins; strip it for loopback requests from our pages.
   ses.webRequest.onBeforeSendHeaders((details, cb) => {
     const h = { ...details.requestHeaders };
+    // publik API: the page sends a placeholder key. The real install key is added here, and only for requests from this app's
+    // own page to publik's API. The page never holds the key.
+    const auth = h["Authorization"] ?? h["authorization"];
+    if (auth === `Bearer ${PUBLIK_PLACEHOLDER}` && details.url.startsWith(`${PUBLIK_API}/`) && details.webContents && isOurPage(details.webContents.getURL())) {
+      const cred = readCredential();
+      if (cred) {
+        delete h["authorization"];
+        h["Authorization"] = `Bearer ${cred.key}`;
+      }
+    }
     try {
       const host = new URL(details.url).hostname;
       const origin = h["Origin"] ?? h["origin"];
@@ -214,7 +225,157 @@ ipcMain.handle("export-pdf", async (event, rawTitle: unknown) => {
   return file;
 });
 
-app.whenReady().then(() => {
+/* ---------------- publik: optional sign-in, usage counting and publik API ----------------
+ * The choice is asked once, on first launch, and remembered. "Continue without publik" means no sign-in, no publik key,
+ * no usage counting and no request to publik: the app runs as it did before. The gate itself (sign-in screen, plan screen,
+ * usage counting) is publik's module in ./publik; this file only decides when it runs, and adds the skip buttons. */
+
+/** The page's placeholder key (src/lib/publik.ts) and publik's API base. Requests to that base get the real key added here. */
+const PUBLIK_API = "https://publikhq.com/api/v1";
+const PUBLIK_PLACEHOLDER = "publik-managed";
+const SKIP_FOR_GOOD = "Continue without publik";
+const SKIP_NOW = "Not now";
+
+type Stored = { mode: "unset" | "signed_in" | "skipped"; ai: boolean };
+const stateFile = () => path.join(app.getPath("userData"), "publik-mode.json");
+function loadStored(): Stored {
+  try {
+    const j = JSON.parse(fs.readFileSync(stateFile(), "utf8"));
+    if (j.mode === "signed_in" || j.mode === "skipped") return { mode: j.mode, ai: j.mode === "signed_in" && j.ai === true };
+  } catch {
+    /* no choice saved yet */
+  }
+  return { mode: "unset", ai: false };
+}
+function saveStored(s: Stored) {
+  fs.mkdirSync(app.getPath("userData"), { recursive: true });
+  fs.writeFileSync(stateFile(), JSON.stringify(s));
+}
+let stored = loadStored();
+let connected = false; // the publik gate passed in this run
+let started = false; // the window exists or is about to; "activate" must not open a second one during the gate
+
+/** Thrown from a gate dialog when the person skips. forGood: "Continue without publik" (remembered); false: "Not now" (asked again). */
+class PublikSkip extends Error {
+  constructor(readonly forGood: boolean) {
+    super("publik skipped");
+  }
+}
+
+/** Draws publik's gate screens as native dialogs. The skip buttons are added here, not in the module. */
+function gateUI(parent: BrowserWindow | null): GateUI {
+  return {
+    async show(screen: GateScreen, signal: AbortSignal) {
+      // "unreachable" is a connection problem, so it only offers "Not now" (a skip for good would be wrong while offline).
+      const offerForGood = screen.id !== "unreachable";
+      const labels = [...screen.buttons.map((b) => b.label), ...(offerForGood ? [SKIP_FOR_GOOD] : []), SKIP_NOW];
+      const opts = {
+        type: "question" as const,
+        title: "TurboGoo",
+        message: screen.title,
+        detail: [screen.body, screen.note].filter(Boolean).join("\n\n"),
+        buttons: labels,
+        defaultId: 0,
+        cancelId: labels.length - 1, // closing the dialog counts as "Not now"
+        noLink: true,
+        signal,
+      };
+      const { response } = parent ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+      if (response < screen.buttons.length) return screen.buttons[response]!.action;
+      throw new PublikSkip(offerForGood && response === screen.buttons.length);
+    },
+    openUrl: (url) => void shell.openExternal(url),
+  };
+}
+
+type Outcome = "connected" | "skipped" | "not_now";
+/** "Continue without publik": remembered, and no publik key is left on this computer. */
+function skipForGood() {
+  stored = { mode: "skipped", ai: false };
+  saveStored(stored);
+  fs.rmSync(credentialPath(), { force: true });
+}
+let gate: Promise<Outcome> | null = null;
+/** Runs publik's gate, one at a time: at start-up, or from Settings. */
+function runGate(parent: BrowserWindow | null): Promise<Outcome> {
+  gate ??= (async (): Promise<Outcome> => {
+    try {
+      const r = await ensureSignedIn(gateUI(parent));
+      connected = true;
+      stored = { mode: "signed_in", ai: r.choice === "publik" };
+      saveStored(stored);
+      return "connected";
+    } catch (e) {
+      if (e instanceof PublikSkip) {
+        if (!e.forGood) return "not_now";
+        skipForGood();
+        return "skipped";
+      }
+      dialog.showErrorBox("TurboGoo", `Couldn't finish signing in with publik: ${(e as Error).message}`);
+      return "not_now";
+    } finally {
+      gate = null;
+    }
+  })();
+  return gate;
+}
+
+/** Start-up. A person who signed in gets the gate before the window. A first-time user is asked once; the answer is remembered. */
+async function startupGate(): Promise<void> {
+  if (stored.mode === "signed_in") {
+    await runGate(null);
+    return;
+  }
+  if (stored.mode !== "unset") return;
+  const r = await dialog.showMessageBox({
+    type: "question",
+    title: "TurboGoo",
+    message: "Sign in with publik?",
+    detail:
+      "Signing in lets publik count your use of TurboGoo, and gives you publik API: AI for TurboGoo without a key of your own. It is optional.\n\n" +
+      "Continue without publik uses TurboGoo as before. Nothing is sent to publik. You can change this later in Settings.\n\n" +
+      "Not now asks again the next time you start TurboGoo.",
+    buttons: ["Sign in with publik", SKIP_FOR_GOOD, SKIP_NOW],
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true,
+  });
+  if (r.response === 0) await runGate(null);
+  else if (r.response === 1) skipForGood();
+}
+
+const publikStatus = () => ({ mode: stored.mode, signedIn: connected, ai: stored.ai });
+/** Only the app's own page may use these calls. */
+const fromOurPage = (e: IpcMainInvokeEvent) => {
+  if (!isOurPage(e.senderFrame?.url)) throw new Error("Not allowed from this page.");
+};
+ipcMain.handle("publik:status", (e) => (fromOurPage(e), publikStatus()));
+ipcMain.handle("publik:sign-in", async (e) => {
+  fromOurPage(e);
+  await runGate(BrowserWindow.fromWebContents(e.sender));
+  return publikStatus();
+});
+ipcMain.handle("publik:set-ai", (e, on: unknown) => {
+  fromOurPage(e);
+  if (!connected) throw new Error("Sign in with publik first.");
+  stored = { ...stored, ai: on === true };
+  saveStored(stored);
+  return publikStatus();
+});
+ipcMain.handle("publik:turn-off", (e) => {
+  fromOurPage(e);
+  stored = { mode: "skipped", ai: false };
+  saveStored(stored);
+  connected = false;
+  fs.rmSync(credentialPath(), { force: true }); // no publik key left on this computer
+  setTimeout(() => {
+    app.relaunch(); // a restart is what stops usage counting: the module's timer lives in this process
+    app.exit(0);
+  }, 800);
+  return publikStatus();
+});
+
+app.whenReady().then(async () => {
   if (!gotLock) return;
   setFetch(((input: any, init: any) => net.fetch(input, init)) as typeof fetch);
   protocol.handle(SCHEME, serve);
@@ -225,8 +386,20 @@ app.whenReady().then(() => {
     { role: "viewMenu" as const },
     { role: "windowMenu" as const },
   ]));
+  if (process.env.PUBLIK_SELF_TEST) {
+    // The build check: the module prints its self-test line and exits. It never shows the first-launch choice.
+    await ensureSignedIn(gateUI(null));
+    return;
+  }
+  try {
+    await startupGate();
+  } catch (e) {
+    dialog.showErrorBox("TurboGoo", `publik: ${(e as Error).message}`);
+  }
+  started = true;
   createWindow();
-  app.on("activate", () => BrowserWindow.getAllWindows().length === 0 && createWindow());
 });
+app.on("activate", () => started && BrowserWindow.getAllWindows().length === 0 && createWindow());
+
 
 app.on("window-all-closed", () => process.platform !== "darwin" && app.quit());
